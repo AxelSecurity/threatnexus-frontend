@@ -32,9 +32,9 @@ export default function TopologyView() {
         const data = await apiClient.getNodes();
         
         // Layout logic (simple horizontal layout)
-        const miners = data.filter((n) => n.type === 'miner');
-        const aggregators = data.filter((n) => n.type === 'aggregator');
-        const outputs = data.filter((n) => n.type === 'output');
+        const miners = data.filter((n) => n.node_type === 'miner');
+        const aggregators = data.filter((n) => n.node_type === 'aggregator');
+        const outputs = data.filter((n) => n.node_type === 'output');
 
         const newNodes: any[] = [];
         const newEdges: Edge[] = [];
@@ -42,14 +42,14 @@ export default function TopologyView() {
         // Miners (Column 0)
         miners.forEach((node, i) => {
           newNodes.push({
-            id: node.id,
+            id: String(node.id),
             type: 'custom',
             position: { x: 100, y: 100 + i * 150 },
             data: {
               label: node.name,
-              type: node.type,
-              status: node.status,
-              details: (node as any).parserType,
+              type: node.node_type,
+              status: node.is_active ? 'enabled' : 'disabled',
+              details: node.config?.parser || 'N/A',
             },
           });
         });
@@ -57,57 +57,62 @@ export default function TopologyView() {
         // Aggregators (Column 1)
         aggregators.forEach((node, i) => {
           newNodes.push({
-            id: node.id,
+            id: String(node.id),
             type: 'custom',
             position: { x: 500, y: 100 + i * 200 },
             data: {
               label: node.name,
-              type: node.type,
-              status: node.status,
-              details: `TTL: ${(node as any).agingRules}d`,
+              type: node.node_type,
+              status: node.is_active ? 'enabled' : 'disabled',
+              details: `TTL: ${node.config?.agingRules || 0}d`,
             },
           });
 
           // Edges from Miners to Aggregators
-          (node as any).inputMiners.forEach((minerId: string) => {
-            newEdges.push({
-              id: `e-${minerId}-${node.id}`,
-              source: minerId,
-              target: node.id,
-              animated: true,
-              style: { stroke: '#52525b', strokeWidth: 2 },
+          if (node.config?.inputMiners) {
+            node.config.inputMiners.forEach((minerId: string) => {
+              newEdges.push({
+                id: `e-${minerId}-${node.id}`,
+                source: String(minerId),
+                target: String(node.id),
+                animated: true,
+                style: { stroke: '#52525b', strokeWidth: 2 },
+              });
             });
-          });
+          }
         });
 
         // Outputs (Column 2)
         outputs.forEach((node, i) => {
           newNodes.push({
-            id: node.id,
+            id: String(node.id),
             type: 'custom',
             position: { x: 900, y: 100 + i * 150 },
             data: {
               label: node.name,
-              type: node.type,
-              status: node.status,
-              details: (node as any).outputFormat,
+              type: node.node_type,
+              status: node.is_active ? 'enabled' : 'disabled',
+              details: node.config?.outputFormat || 'N/A',
             },
           });
 
           // Edges from Aggregators to Outputs
-          newEdges.push({
-            id: `e-${(node as any).sourceAggregator}-${node.id}`,
-            source: (node as any).sourceAggregator,
-            target: node.id,
-            animated: true,
-            style: { stroke: '#10b981', strokeWidth: 2 },
-          });
+          if (node.config?.sourceAggregator) {
+            newEdges.push({
+              id: `e-${node.config.sourceAggregator}-${node.id}`,
+              source: String(node.config.sourceAggregator),
+              target: String(node.id),
+              animated: true,
+              style: { stroke: '#10b981', strokeWidth: 2 },
+            });
+          }
         });
 
         setNodes(newNodes);
         setEdges(newEdges);
-      } catch (error) {
+      } catch (error: any) {
         console.error('Failed to load graph data', error);
+        alert(`Errore nel caricamento della topologia: ${error.message}`);
       } finally {
         setLoading(false);
       }

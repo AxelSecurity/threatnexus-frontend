@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Plus, Edit2, Trash2, Send, AlertCircle, ExternalLink } from 'lucide-react';
-import { apiClient, OutputNode, AggregatorNode } from '@/lib/api_client';
+import { apiClient, ThreatNode } from '@/lib/api_client';
 
 const outputSchema = z.object({
   name: z.string().min(3, 'Name must be at least 3 characters'),
@@ -18,8 +18,8 @@ const outputSchema = z.object({
 type OutputFormValues = z.infer<typeof outputSchema>;
 
 export default function OutputsPage() {
-  const [outputs, setOutputs] = useState<OutputNode[]>([]);
-  const [availableAggregators, setAvailableAggregators] = useState<AggregatorNode[]>([]);
+  const [outputs, setOutputs] = useState<ThreatNode[]>([]);
+  const [availableAggregators, setAvailableAggregators] = useState<ThreatNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -43,8 +43,8 @@ export default function OutputsPage() {
     setLoading(true);
     try {
       const nodes = await apiClient.getNodes();
-      setOutputs(nodes.filter((n) => n.type === 'output') as OutputNode[]);
-      setAvailableAggregators(nodes.filter((n) => n.type === 'aggregator') as AggregatorNode[]);
+      setOutputs(nodes.filter((n) => n.node_type === 'output'));
+      setAvailableAggregators(nodes.filter((n) => n.node_type === 'aggregator'));
     } finally {
       setLoading(false);
     }
@@ -57,8 +57,8 @@ export default function OutputsPage() {
       try {
         const nodes = await apiClient.getNodes();
         if (mounted) {
-          setOutputs(nodes.filter((n) => n.type === 'output') as OutputNode[]);
-          setAvailableAggregators(nodes.filter((n) => n.type === 'aggregator') as AggregatorNode[]);
+          setOutputs(nodes.filter((n) => n.node_type === 'output'));
+          setAvailableAggregators(nodes.filter((n) => n.node_type === 'aggregator'));
         }
       } finally {
         if (mounted) setLoading(false);
@@ -70,25 +70,39 @@ export default function OutputsPage() {
 
   const onSubmit = async (data: OutputFormValues) => {
     try {
+      const configPayload = {
+        sourceAggregator: data.sourceAggregator,
+        outputFormat: data.outputFormat,
+        endpointPath: data.endpointPath,
+      };
+
+      const payload = {
+        name: data.name,
+        node_type: 'output' as const,
+        is_active: data.status === 'enabled',
+        config: configPayload,
+      };
+
       if (editingId) {
-        await apiClient.updateNode(editingId, data);
+        await apiClient.updateNode(editingId, payload);
       } else {
-        await apiClient.createNode({ ...data, type: 'output' });
+        await apiClient.createNode(payload as any);
       }
       await loadData();
       closeForm();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to save output', error);
+      alert(`Errore: ${error.message}`);
     }
   };
 
-  const handleEdit = (output: OutputNode) => {
-    setEditingId(output.id);
+  const handleEdit = (output: ThreatNode) => {
+    setEditingId(output.id || null);
     setValue('name', output.name);
-    setValue('sourceAggregator', output.sourceAggregator);
-    setValue('outputFormat', output.outputFormat);
-    setValue('endpointPath', output.endpointPath);
-    setValue('status', output.status);
+    setValue('sourceAggregator', output.config?.sourceAggregator || '');
+    setValue('outputFormat', output.config?.outputFormat || 'txt');
+    setValue('endpointPath', output.config?.endpointPath || '/feeds/');
+    setValue('status', output.is_active ? 'enabled' : 'disabled');
     setIsFormOpen(true);
   };
 
@@ -238,7 +252,7 @@ export default function OutputsPage() {
             </thead>
             <tbody className="divide-y divide-zinc-800">
               {outputs.map((output) => {
-                const sourceAgg = availableAggregators.find(a => a.id === output.sourceAggregator);
+                const sourceAgg = availableAggregators.find(a => a.id === output.config?.sourceAggregator);
                 return (
                   <tr key={output.id} className="hover:bg-zinc-800/50 transition-colors">
                     <td className="px-6 py-4 font-medium text-zinc-200">{output.name}</td>
@@ -247,23 +261,23 @@ export default function OutputsPage() {
                     </td>
                     <td className="px-6 py-4">
                       <span className="px-2 py-1 bg-zinc-800 text-zinc-300 rounded text-xs font-mono uppercase">
-                        {output.outputFormat}
+                        {output.config?.outputFormat}
                       </span>
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center text-zinc-400 font-mono text-xs">
-                        <span className="truncate max-w-[200px]">{output.endpointPath}</span>
+                        <span className="truncate max-w-[200px]">{output.config?.endpointPath}</span>
                         <ExternalLink className="w-3 h-3 ml-2 cursor-pointer hover:text-emerald-400" />
                       </div>
                     </td>
                     <td className="px-6 py-4">
                       <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                        output.status === 'enabled' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
+                        output.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
                       }`}>
                         <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
-                          output.status === 'enabled' ? 'bg-emerald-400' : 'bg-red-400'
+                          output.is_active ? 'bg-emerald-400' : 'bg-red-400'
                         }`}></span>
-                        {output.status}
+                        {output.is_active ? 'enabled' : 'disabled'}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right">
@@ -275,7 +289,7 @@ export default function OutputsPage() {
                         <Edit2 className="w-4 h-4" />
                       </button>
                       <button
-                        onClick={() => handleDelete(output.id)}
+                        onClick={() => output.id && handleDelete(output.id)}
                         className="p-2 text-zinc-400 hover:text-red-400 transition-colors ml-1"
                         title="Delete"
                       >

@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Plus, Edit2, Trash2, GitMerge, AlertCircle } from 'lucide-react';
-import { apiClient, AggregatorNode, MinerNode } from '@/lib/api_client';
+import { apiClient, ThreatNode } from '@/lib/api_client';
 
 const aggregatorSchema = z.object({
   name: z.string().min(3, 'Name must be at least 3 characters'),
@@ -19,8 +19,8 @@ const aggregatorSchema = z.object({
 type AggregatorFormValues = z.infer<typeof aggregatorSchema>;
 
 export default function AggregatorsPage() {
-  const [aggregators, setAggregators] = useState<AggregatorNode[]>([]);
-  const [availableMiners, setAvailableMiners] = useState<MinerNode[]>([]);
+  const [aggregators, setAggregators] = useState<ThreatNode[]>([]);
+  const [availableMiners, setAvailableMiners] = useState<ThreatNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -46,8 +46,8 @@ export default function AggregatorsPage() {
     setLoading(true);
     try {
       const nodes = await apiClient.getNodes();
-      setAggregators(nodes.filter((n) => n.type === 'aggregator') as AggregatorNode[]);
-      setAvailableMiners(nodes.filter((n) => n.type === 'miner') as MinerNode[]);
+      setAggregators(nodes.filter((n) => n.node_type === 'aggregator'));
+      setAvailableMiners(nodes.filter((n) => n.node_type === 'miner'));
     } finally {
       setLoading(false);
     }
@@ -60,8 +60,8 @@ export default function AggregatorsPage() {
       try {
         const nodes = await apiClient.getNodes();
         if (mounted) {
-          setAggregators(nodes.filter((n) => n.type === 'aggregator') as AggregatorNode[]);
-          setAvailableMiners(nodes.filter((n) => n.type === 'miner') as MinerNode[]);
+          setAggregators(nodes.filter((n) => n.node_type === 'aggregator'));
+          setAvailableMiners(nodes.filter((n) => n.node_type === 'miner'));
         }
       } finally {
         if (mounted) setLoading(false);
@@ -73,31 +73,41 @@ export default function AggregatorsPage() {
 
   const onSubmit = async (data: AggregatorFormValues) => {
     try {
-      const payload = {
-        ...data,
+      const configPayload = {
+        inputMiners: data.inputMiners,
+        agingRules: data.agingRules,
+        confidenceOverride: data.confidenceOverride,
         whitelistDomains: data.whitelistDomains.split(',').map(s => s.trim()).filter(Boolean),
+      };
+      
+      const payload = {
+        name: data.name,
+        node_type: 'aggregator' as const,
+        is_active: data.status === 'enabled',
+        config: configPayload,
       };
       
       if (editingId) {
         await apiClient.updateNode(editingId, payload);
       } else {
-        await apiClient.createNode({ ...payload, type: 'aggregator' });
+        await apiClient.createNode(payload as any);
       }
       await loadData();
       closeForm();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to save aggregator', error);
+      alert(`Errore: ${error.message}`);
     }
   };
 
-  const handleEdit = (aggregator: AggregatorNode) => {
-    setEditingId(aggregator.id);
+  const handleEdit = (aggregator: ThreatNode) => {
+    setEditingId(aggregator.id || null);
     setValue('name', aggregator.name);
-    setValue('inputMiners', aggregator.inputMiners);
-    setValue('agingRules', aggregator.agingRules);
-    setValue('confidenceOverride', aggregator.confidenceOverride);
-    setValue('whitelistDomains', aggregator.whitelistDomains.join(', '));
-    setValue('status', aggregator.status);
+    setValue('inputMiners', aggregator.config?.inputMiners || []);
+    setValue('agingRules', aggregator.config?.agingRules || 30);
+    setValue('confidenceOverride', aggregator.config?.confidenceOverride || 50);
+    setValue('whitelistDomains', (aggregator.config?.whitelistDomains || []).join(', '));
+    setValue('status', aggregator.is_active ? 'enabled' : 'disabled');
     setIsFormOpen(true);
   };
 
@@ -260,29 +270,29 @@ export default function AggregatorsPage() {
                   <td className="px-6 py-4 font-medium text-zinc-200">{agg.name}</td>
                   <td className="px-6 py-4">
                     <span className="px-2 py-1 bg-zinc-800 text-zinc-300 rounded text-xs font-mono">
-                      {agg.inputMiners.length} Miners
+                      {(agg.config?.inputMiners || []).length} Miners
                     </span>
                   </td>
-                  <td className="px-6 py-4 font-mono text-xs text-zinc-400">{agg.agingRules}d</td>
+                  <td className="px-6 py-4 font-mono text-xs text-zinc-400">{agg.config?.agingRules || 0}d</td>
                   <td className="px-6 py-4">
                     <div className="flex items-center">
                       <div className="w-16 h-1.5 bg-zinc-800 rounded-full mr-2 overflow-hidden">
                         <div 
                           className="h-full bg-emerald-500" 
-                          style={{ width: `${agg.confidenceOverride}%` }}
+                          style={{ width: `${agg.config?.confidenceOverride || 0}%` }}
                         />
                       </div>
-                      <span className="text-xs font-mono text-zinc-400">{agg.confidenceOverride}</span>
+                      <span className="text-xs font-mono text-zinc-400">{agg.config?.confidenceOverride || 0}</span>
                     </div>
                   </td>
                   <td className="px-6 py-4">
                     <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                      agg.status === 'enabled' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
+                      agg.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
                     }`}>
                       <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
-                        agg.status === 'enabled' ? 'bg-emerald-400' : 'bg-red-400'
+                        agg.is_active ? 'bg-emerald-400' : 'bg-red-400'
                       }`}></span>
-                      {agg.status}
+                      {agg.is_active ? 'enabled' : 'disabled'}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-right">
@@ -294,7 +304,7 @@ export default function AggregatorsPage() {
                       <Edit2 className="w-4 h-4" />
                     </button>
                     <button
-                      onClick={() => handleDelete(agg.id)}
+                      onClick={() => agg.id && handleDelete(agg.id)}
                       className="p-2 text-zinc-400 hover:text-red-400 transition-colors ml-1"
                       title="Delete"
                     >

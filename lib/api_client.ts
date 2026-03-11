@@ -1,119 +1,68 @@
-export type NodeType = 'miner' | 'aggregator' | 'output';
+const BASE_URL = 'http://localhost:8000/api/v1';
 
-export interface BaseNode {
-  id: string;
+export interface ThreatNode {
+  id?: string;
   name: string;
-  type: NodeType;
-  status: 'enabled' | 'disabled';
+  node_type: 'miner' | 'aggregator' | 'output';
+  is_active: boolean;
+  config: any;
 }
 
-export interface MinerNode extends BaseNode {
-  type: 'miner';
-  sourceUrl: string;
-  parserType: 'csv' | 'json' | 'regex' | 'stix';
-  pollingInterval: string; // Cron format
+async function handleResponse(res: Response) {
+  if (!res.ok) {
+    let errorMessage = `HTTP error! status: ${res.status}`;
+    try {
+      const errorData = await res.json();
+      // FastAPI typically returns validation errors in 'detail'
+      if (typeof errorData.detail === 'string') {
+        errorMessage = errorData.detail;
+      } else if (Array.isArray(errorData.detail)) {
+        // Handle FastAPI 422 validation array
+        errorMessage = errorData.detail.map((e: any) => `${e.loc.join('.')} - ${e.msg}`).join(', ');
+      } else {
+        errorMessage = JSON.stringify(errorData);
+      }
+    } catch (e) {
+      // Ignore JSON parse error
+    }
+    throw new Error(errorMessage);
+  }
+  return res.json();
 }
 
-export interface AggregatorNode extends BaseNode {
-  type: 'aggregator';
-  inputMiners: string[]; // Array of Miner IDs
-  agingRules: number; // TTL in days
-  confidenceOverride: number; // 0-100
-  whitelistDomains: string[];
-}
-
-export interface OutputNode extends BaseNode {
-  type: 'output';
-  sourceAggregator: string; // Aggregator ID
-  outputFormat: 'txt' | 'json' | 'csv';
-  endpointPath: string;
-}
-
-export type ThreatNode = MinerNode | AggregatorNode | OutputNode;
-
-// Mock Data
-let mockNodes: ThreatNode[] = [
-  {
-    id: 'miner-1',
-    name: 'AlienVault OTX',
-    type: 'miner',
-    status: 'enabled',
-    sourceUrl: 'https://otx.alienvault.com/api/v1/indicators',
-    parserType: 'json',
-    pollingInterval: '0 */2 * * *',
-  },
-  {
-    id: 'miner-2',
-    name: 'Spamhaus DROP',
-    type: 'miner',
-    status: 'enabled',
-    sourceUrl: 'https://www.spamhaus.org/drop/drop.txt',
-    parserType: 'csv',
-    pollingInterval: '0 0 * * *',
-  },
-  {
-    id: 'agg-1',
-    name: 'High Confidence IPs',
-    type: 'aggregator',
-    status: 'enabled',
-    inputMiners: ['miner-1', 'miner-2'],
-    agingRules: 30,
-    confidenceOverride: 90,
-    whitelistDomains: ['microsoft.com', 'google.com'],
-  },
-  {
-    id: 'out-1',
-    name: 'Palo Alto EDL',
-    type: 'output',
-    status: 'enabled',
-    sourceAggregator: 'agg-1',
-    outputFormat: 'txt',
-    endpointPath: '/feeds/high-confidence-ips/txt',
-  },
-];
-
-// Mock API Client
 export const apiClient = {
   async getNodes(): Promise<ThreatNode[]> {
-    return new Promise((resolve) => {
-      setTimeout(() => resolve([...mockNodes]), 300);
-    });
+    const res = await fetch(`${BASE_URL}/nodes`);
+    return handleResponse(res);
   },
 
-  async getNodeById(id: string): Promise<ThreatNode | undefined> {
-    return new Promise((resolve) => {
-      setTimeout(() => resolve(mockNodes.find((n) => n.id === id)), 200);
-    });
+  async getNodeById(id: string): Promise<ThreatNode> {
+    const res = await fetch(`${BASE_URL}/nodes/${id}`);
+    return handleResponse(res);
   },
 
   async createNode(node: Omit<ThreatNode, 'id'>): Promise<ThreatNode> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const newNode = { ...node, id: `${node.type}-${Date.now()}` } as ThreatNode;
-        mockNodes.push(newNode);
-        resolve(newNode);
-      }, 400);
+    const res = await fetch(`${BASE_URL}/nodes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(node),
     });
+    return handleResponse(res);
   },
 
   async updateNode(id: string, updates: Partial<ThreatNode>): Promise<ThreatNode> {
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        const index = mockNodes.findIndex((n) => n.id === id);
-        if (index === -1) return reject(new Error('Node not found'));
-        
-        mockNodes[index] = { ...mockNodes[index], ...updates } as ThreatNode;
-        resolve(mockNodes[index]);
-      }, 400);
+    const res = await fetch(`${BASE_URL}/nodes/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
     });
+    return handleResponse(res);
   },
 
   async deleteNode(id: string): Promise<void> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        mockNodes = mockNodes.filter((n) => n.id !== id);
-        resolve();
-      }, 300);
+    const res = await fetch(`${BASE_URL}/nodes/${id}`, {
+      method: 'DELETE',
     });
+    return handleResponse(res);
   },
 };

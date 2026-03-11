@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Plus, Edit2, Trash2, Database, AlertCircle } from 'lucide-react';
-import { apiClient, MinerNode } from '@/lib/api_client';
+import { apiClient, ThreatNode } from '@/lib/api_client';
 
 const minerSchema = z.object({
   name: z.string().min(3, 'Name must be at least 3 characters'),
@@ -43,7 +43,7 @@ const cronToMinutes = (cron: string): number => {
 };
 
 export default function MinersPage() {
-  const [miners, setMiners] = useState<MinerNode[]>([]);
+  const [miners, setMiners] = useState<ThreatNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -70,7 +70,7 @@ export default function MinersPage() {
     setLoading(true);
     try {
       const nodes = await apiClient.getNodes();
-      setMiners(nodes.filter((n) => n.type === 'miner') as MinerNode[]);
+      setMiners(nodes.filter((n) => n.node_type === 'miner'));
     } finally {
       setLoading(false);
     }
@@ -83,7 +83,7 @@ export default function MinersPage() {
       try {
         const nodes = await apiClient.getNodes();
         if (mounted) {
-          setMiners(nodes.filter((n) => n.type === 'miner') as MinerNode[]);
+          setMiners(nodes.filter((n) => n.node_type === 'miner'));
         }
       } finally {
         if (mounted) setLoading(false);
@@ -110,36 +110,42 @@ export default function MinersPage() {
       };
 
       const payload = {
-        ...data,
+        name: data.name,
+        node_type: 'miner' as const,
+        is_active: data.status === 'enabled',
         config: configPayload,
       };
 
       if (editingId) {
         await apiClient.updateNode(editingId, payload);
       } else {
-        await apiClient.createNode({ ...payload, type: 'miner' } as any);
+        await apiClient.createNode(payload as any);
       }
       await loadMiners();
       closeForm();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to save miner', error);
+      alert(`Errore: ${error.message}`);
     }
   };
 
-  const handleEdit = (miner: any) => {
-    setEditingId(miner.id);
+  const handleEdit = (miner: ThreatNode) => {
+    setEditingId(miner.id || null);
     setValue('name', miner.name);
-    setValue('sourceUrl', miner.sourceUrl);
-    setValue('parserType', miner.parserType);
-    setValue('pollingInterval', miner.pollingInterval);
-    setValue('status', miner.status);
+    setValue('status', miner.is_active ? 'enabled' : 'disabled');
     
     if (miner.config) {
+      setValue('sourceUrl', miner.config.url || '');
+      setValue('parserType', miner.config.parser || 'json');
+      setValue('pollingInterval', miner.config.polling_interval ? `*/${miner.config.polling_interval} * * * *` : '0 */2 * * *');
       setValue('authType', miner.config.auth_type || 'none');
       setValue('authUsername', miner.config.auth_username || '');
       setValue('authPassword', miner.config.auth_password || '');
       setValue('authToken', miner.config.auth_token || '');
     } else {
+      setValue('sourceUrl', '');
+      setValue('parserType', 'json');
+      setValue('pollingInterval', '0 */2 * * *');
       setValue('authType', 'none');
       setValue('authUsername', '');
       setValue('authPassword', '');
@@ -339,23 +345,23 @@ export default function MinersPage() {
               {miners.map((miner) => (
                 <tr key={miner.id} className="hover:bg-zinc-800/50 transition-colors">
                   <td className="px-6 py-4 font-medium text-zinc-200">{miner.name}</td>
-                  <td className="px-6 py-4 text-zinc-400 truncate max-w-[200px]" title={miner.sourceUrl}>
-                    {miner.sourceUrl}
+                  <td className="px-6 py-4 text-zinc-400 truncate max-w-[200px]" title={miner.config?.url}>
+                    {miner.config?.url}
                   </td>
                   <td className="px-6 py-4">
                     <span className="px-2 py-1 bg-zinc-800 text-zinc-300 rounded text-xs font-mono uppercase">
-                      {miner.parserType}
+                      {miner.config?.parser}
                     </span>
                   </td>
-                  <td className="px-6 py-4 font-mono text-xs text-zinc-400">{miner.pollingInterval}</td>
+                  <td className="px-6 py-4 font-mono text-xs text-zinc-400">{miner.config?.polling_interval ? `${miner.config.polling_interval} min` : 'N/A'}</td>
                   <td className="px-6 py-4">
                     <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                      miner.status === 'enabled' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
+                      miner.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
                     }`}>
                       <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
-                        miner.status === 'enabled' ? 'bg-emerald-400' : 'bg-red-400'
+                        miner.is_active ? 'bg-emerald-400' : 'bg-red-400'
                       }`}></span>
-                      {miner.status}
+                      {miner.is_active ? 'enabled' : 'disabled'}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-right">
@@ -367,7 +373,7 @@ export default function MinersPage() {
                       <Edit2 className="w-4 h-4" />
                     </button>
                     <button
-                      onClick={() => handleDelete(miner.id)}
+                      onClick={() => miner.id && handleDelete(miner.id)}
                       className="p-2 text-zinc-400 hover:text-red-400 transition-colors ml-1"
                       title="Delete"
                     >
