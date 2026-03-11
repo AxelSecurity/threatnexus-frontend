@@ -10,12 +10,37 @@ import { apiClient, MinerNode } from '@/lib/api_client';
 const minerSchema = z.object({
   name: z.string().min(3, 'Name must be at least 3 characters'),
   sourceUrl: z.string().url('Must be a valid URL'),
-  parserType: z.enum(['csv', 'json', 'regex', 'stix']),
+  parserType: z.enum(['csv', 'json', 'regex', 'stix', 'txt']),
   pollingInterval: z.string().min(1, 'Cron expression is required'),
   status: z.enum(['enabled', 'disabled']),
+  authType: z.enum(['none', 'basic', 'bearer']),
+  authUsername: z.string().optional(),
+  authPassword: z.string().optional(),
+  authToken: z.string().optional(),
 });
 
 type MinerFormValues = z.infer<typeof minerSchema>;
+
+const cronToMinutes = (cron: string): number => {
+  try {
+    const parts = cron.trim().split(/\s+/);
+    if (parts.length >= 5) {
+      const minute = parts[0];
+      const hour = parts[1];
+      
+      if (hour.startsWith('*/')) {
+        return parseInt(hour.replace('*/', '')) * 60;
+      }
+      if (minute.startsWith('*/')) {
+        return parseInt(minute.replace('*/', ''));
+      }
+      if (minute !== '*' && hour !== '*') {
+        return 24 * 60; 
+      }
+    }
+  } catch (e) {}
+  return 120; // Default fallback
+};
 
 export default function MinersPage() {
   const [miners, setMiners] = useState<MinerNode[]>([]);
@@ -28,14 +53,18 @@ export default function MinersPage() {
     handleSubmit,
     reset,
     setValue,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<MinerFormValues>({
     resolver: zodResolver(minerSchema),
     defaultValues: {
       status: 'enabled',
       parserType: 'json',
+      authType: 'none',
     },
   });
+
+  const authType = watch('authType');
 
   const loadMiners = async () => {
     setLoading(true);
@@ -66,10 +95,29 @@ export default function MinersPage() {
 
   const onSubmit = async (data: MinerFormValues) => {
     try {
+      const configPayload = {
+        url: data.sourceUrl,
+        parser: data.parserType,
+        polling_interval: cronToMinutes(data.pollingInterval),
+        auth_type: data.authType,
+        ...(data.authType === 'basic' && {
+          auth_username: data.authUsername,
+          auth_password: data.authPassword,
+        }),
+        ...(data.authType === 'bearer' && {
+          auth_token: data.authToken,
+        })
+      };
+
+      const payload = {
+        ...data,
+        config: configPayload,
+      };
+
       if (editingId) {
-        await apiClient.updateNode(editingId, data);
+        await apiClient.updateNode(editingId, payload);
       } else {
-        await apiClient.createNode({ ...data, type: 'miner' });
+        await apiClient.createNode({ ...payload, type: 'miner' } as any);
       }
       await loadMiners();
       closeForm();
@@ -78,13 +126,26 @@ export default function MinersPage() {
     }
   };
 
-  const handleEdit = (miner: MinerNode) => {
+  const handleEdit = (miner: any) => {
     setEditingId(miner.id);
     setValue('name', miner.name);
     setValue('sourceUrl', miner.sourceUrl);
     setValue('parserType', miner.parserType);
     setValue('pollingInterval', miner.pollingInterval);
     setValue('status', miner.status);
+    
+    if (miner.config) {
+      setValue('authType', miner.config.auth_type || 'none');
+      setValue('authUsername', miner.config.auth_username || '');
+      setValue('authPassword', miner.config.auth_password || '');
+      setValue('authToken', miner.config.auth_token || '');
+    } else {
+      setValue('authType', 'none');
+      setValue('authUsername', '');
+      setValue('authPassword', '');
+      setValue('authToken', '');
+    }
+    
     setIsFormOpen(true);
   };
 
@@ -124,7 +185,7 @@ export default function MinersPage() {
 
       {isFormOpen && (
         <div className="mb-8 p-6 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl">
-          <h2 className="text-lg font-medium mb-4">
+          <h2 className="text-lg font-medium mb-4 text-white">
             {editingId ? 'Edit Miner' : 'Create New Miner'}
           </h2>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
@@ -133,7 +194,7 @@ export default function MinersPage() {
                 <label className="block text-sm font-medium text-zinc-400 mb-1">Miner Name</label>
                 <input
                   {...register('name')}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
                   placeholder="e.g., AlienVault OTX"
                 />
                 {errors.name && <p className="text-red-400 text-xs mt-1">{errors.name.message}</p>}
@@ -143,7 +204,7 @@ export default function MinersPage() {
                 <label className="block text-sm font-medium text-zinc-400 mb-1">Source URL</label>
                 <input
                   {...register('sourceUrl')}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
                   placeholder="https://..."
                 />
                 {errors.sourceUrl && <p className="text-red-400 text-xs mt-1">{errors.sourceUrl.message}</p>}
@@ -153,12 +214,13 @@ export default function MinersPage() {
                 <label className="block text-sm font-medium text-zinc-400 mb-1">Parser Type</label>
                 <select
                   {...register('parserType')}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
                 >
                   <option value="csv">CSV</option>
                   <option value="json">JSON</option>
                   <option value="regex">Regex</option>
                   <option value="stix">STIX/TAXII</option>
+                  <option value="txt">TXT (Plain Text List)</option>
                 </select>
               </div>
 
@@ -166,22 +228,68 @@ export default function MinersPage() {
                 <label className="block text-sm font-medium text-zinc-400 mb-1">Polling Interval (Cron)</label>
                 <input
                   {...register('pollingInterval')}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
                   placeholder="0 */2 * * *"
                 />
                 {errors.pollingInterval && <p className="text-red-400 text-xs mt-1">{errors.pollingInterval.message}</p>}
               </div>
 
               <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-1">Authentication Type</label>
+                <select
+                  {...register('authType')}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                >
+                  <option value="none">None</option>
+                  <option value="basic">Basic Auth</option>
+                  <option value="bearer">Bearer Token</option>
+                </select>
+              </div>
+
+              <div>
                 <label className="block text-sm font-medium text-zinc-400 mb-1">Status</label>
                 <select
                   {...register('status')}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
                 >
                   <option value="enabled">Enabled</option>
                   <option value="disabled">Disabled</option>
                 </select>
               </div>
+
+              {authType === 'basic' && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-zinc-400 mb-1">Username</label>
+                    <input
+                      {...register('authUsername')}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                      placeholder="Username"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-zinc-400 mb-1">Password</label>
+                    <input
+                      type="password"
+                      {...register('authPassword')}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                      placeholder="••••••••"
+                    />
+                  </div>
+                </>
+              )}
+
+              {authType === 'bearer' && (
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-zinc-400 mb-1">Token</label>
+                  <input
+                    type="password"
+                    {...register('authToken')}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                    placeholder="ey..."
+                  />
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end space-x-3 pt-4 border-t border-zinc-800 mt-6">
