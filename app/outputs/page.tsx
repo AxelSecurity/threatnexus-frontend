@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Plus, Edit2, Trash2, Send, AlertCircle, ExternalLink } from 'lucide-react';
-import { apiClient, ThreatNode } from '@/lib/api_client';
+import { apiClient, ThreatNode, ThreatEdge } from '@/lib/api_client';
 
 const outputSchema = z.object({
   name: z.string().min(3, 'Name must be at least 3 characters'),
@@ -20,6 +20,7 @@ type OutputFormValues = z.infer<typeof outputSchema>;
 export default function OutputsPage() {
   const [outputs, setOutputs] = useState<ThreatNode[]>([]);
   const [availableAggregators, setAvailableAggregators] = useState<ThreatNode[]>([]);
+  const [edges, setEdges] = useState<ThreatEdge[]>([]);
   const [loading, setLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -42,9 +43,13 @@ export default function OutputsPage() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const nodes = await apiClient.getNodes();
+      const [nodes, allEdges] = await Promise.all([
+        apiClient.getNodes(),
+        apiClient.getEdges()
+      ]);
       setOutputs(nodes.filter((n) => n.node_type === 'output'));
       setAvailableAggregators(nodes.filter((n) => n.node_type === 'aggregator'));
+      setEdges(allEdges);
     } finally {
       setLoading(false);
     }
@@ -55,10 +60,14 @@ export default function OutputsPage() {
     const fetchData = async () => {
       setLoading(true);
       try {
-        const nodes = await apiClient.getNodes();
+        const [nodes, allEdges] = await Promise.all([
+          apiClient.getNodes(),
+          apiClient.getEdges()
+        ]);
         if (mounted) {
           setOutputs(nodes.filter((n) => n.node_type === 'output'));
           setAvailableAggregators(nodes.filter((n) => n.node_type === 'aggregator'));
+          setEdges(allEdges);
         }
       } finally {
         if (mounted) setLoading(false);
@@ -71,7 +80,6 @@ export default function OutputsPage() {
   const onSubmit = async (data: OutputFormValues) => {
     try {
       const configPayload = {
-        sourceAggregator: data.sourceAggregator,
         outputFormat: data.outputFormat,
         endpointPath: data.endpointPath,
       };
@@ -85,8 +93,31 @@ export default function OutputsPage() {
 
       if (editingId) {
         await apiClient.updateNode(editingId, payload);
+        
+        // Update edge if necessary
+        const existingEdge = edges.find(e => e.target_id === editingId);
+        if (existingEdge && existingEdge.source_id !== data.sourceAggregator) {
+          if (existingEdge.id) {
+            await apiClient.deleteEdge(existingEdge.id);
+          }
+          await apiClient.createEdge({
+            source_id: data.sourceAggregator,
+            target_id: editingId
+          });
+        } else if (!existingEdge) {
+          await apiClient.createEdge({
+            source_id: data.sourceAggregator,
+            target_id: editingId
+          });
+        }
       } else {
-        await apiClient.createNode(payload as any);
+        const newNode = await apiClient.createNode(payload as any);
+        if (newNode.id) {
+          await apiClient.createEdge({
+            source_id: data.sourceAggregator,
+            target_id: newNode.id
+          });
+        }
       }
       await loadData();
       closeForm();
@@ -99,7 +130,10 @@ export default function OutputsPage() {
   const handleEdit = (output: ThreatNode) => {
     setEditingId(output.id || null);
     setValue('name', output.name);
-    setValue('sourceAggregator', output.config?.sourceAggregator || '');
+    
+    const existingEdge = edges.find(e => e.target_id === output.id);
+    setValue('sourceAggregator', existingEdge ? existingEdge.source_id : '');
+    
     setValue('outputFormat', output.config?.outputFormat || 'txt');
     setValue('endpointPath', output.config?.endpointPath || '/feeds/');
     setValue('status', output.is_active ? 'enabled' : 'disabled');
@@ -252,12 +286,13 @@ export default function OutputsPage() {
             </thead>
             <tbody className="divide-y divide-zinc-800">
               {outputs.map((output) => {
-                const sourceAgg = availableAggregators.find(a => a.id === output.config?.sourceAggregator);
+                const edge = edges.find(e => e.target_id === output.id);
+                const sourceAgg = availableAggregators.find(a => a.id === edge?.source_id);
                 return (
                   <tr key={output.id} className="hover:bg-zinc-800/50 transition-colors">
                     <td className="px-6 py-4 font-medium text-zinc-200">{output.name}</td>
                     <td className="px-6 py-4 text-zinc-400">
-                      {sourceAgg ? sourceAgg.name : <span className="text-red-400">Unknown</span>}
+                      {sourceAgg ? sourceAgg.name : <span className="text-red-400">Non collegato</span>}
                     </td>
                     <td className="px-6 py-4">
                       <span className="px-2 py-1 bg-zinc-800 text-zinc-300 rounded text-xs font-mono uppercase">

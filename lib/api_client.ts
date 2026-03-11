@@ -8,6 +8,12 @@ export interface ThreatNode {
   config: any;
 }
 
+export interface ThreatEdge {
+  id?: string;
+  source_id: string;
+  target_id: string;
+}
+
 async function handleResponse(res: Response) {
   if (!res.ok) {
     let errorMessage = `HTTP error! status: ${res.status}`;
@@ -61,6 +67,27 @@ export const apiClient = {
 
   async deleteNode(id: string): Promise<void> {
     const res = await fetch(`${BASE_URL}/nodes/${id}`, {
+      method: 'DELETE',
+    });
+    return handleResponse(res);
+  },
+
+  async getEdges(): Promise<ThreatEdge[]> {
+    const res = await fetch(`${BASE_URL}/edges`);
+    return handleResponse(res);
+  },
+
+  async createEdge(edge: Omit<ThreatEdge, 'id'>): Promise<ThreatEdge> {
+    const res = await fetch(`${BASE_URL}/edges`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(edge),
+    });
+    return handleResponse(res);
+  },
+
+  async deleteEdge(id: string): Promise<void> {
+    const res = await fetch(`${BASE_URL}/edges/${id}`, {
       method: 'DELETE',
     });
     return handleResponse(res);
