@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Plus, Edit2, Trash2, Database, AlertCircle } from 'lucide-react';
+import { Plus, Edit2, Trash2, Database, AlertCircle, Play, Eye, X } from 'lucide-react';
 import { apiClient, ThreatNode } from '@/lib/api_client';
 
 const minerSchema = z.object({
@@ -47,6 +47,13 @@ export default function MinersPage() {
   const [loading, setLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Modal State
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedMiner, setSelectedMiner] = useState<ThreatNode | null>(null);
+  const [minerLogs, setMinerLogs] = useState<any[]>([]);
+  const [minerIocs, setMinerIocs] = useState<any[]>([]);
+  const [modalLoading, setModalLoading] = useState(false);
 
   const {
     register,
@@ -159,6 +166,36 @@ export default function MinersPage() {
     if (confirm('Are you sure you want to delete this miner?')) {
       await apiClient.deleteNode(id);
       await loadMiners();
+    }
+  };
+
+  const handleRunNow = async (id: string) => {
+    try {
+      await apiClient.triggerNode(id);
+      alert('Miner avviato in background');
+    } catch (error: any) {
+      console.error('Failed to trigger miner', error);
+      alert(`Errore: ${error.message}`);
+    }
+  };
+
+  const handleOpenInfo = async (miner: ThreatNode) => {
+    setSelectedMiner(miner);
+    setIsModalOpen(true);
+    setModalLoading(true);
+    try {
+      if (miner.id) {
+        const [logs, iocs] = await Promise.all([
+          apiClient.getNodeLogs(miner.id),
+          apiClient.getNodeIocs(miner.id)
+        ]);
+        setMinerLogs(logs);
+        setMinerIocs(iocs);
+      }
+    } catch (error: any) {
+      console.error('Failed to fetch miner details', error);
+    } finally {
+      setModalLoading(false);
     }
   };
 
@@ -366,8 +403,22 @@ export default function MinersPage() {
                   </td>
                   <td className="px-6 py-4 text-right">
                     <button
+                      onClick={() => miner.id && handleRunNow(miner.id)}
+                      className="p-2 text-zinc-400 hover:text-emerald-400 transition-colors"
+                      title="Run Now"
+                    >
+                      <Play className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleOpenInfo(miner)}
+                      className="p-2 text-zinc-400 hover:text-blue-400 transition-colors ml-1"
+                      title="Info"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
+                    <button
                       onClick={() => handleEdit(miner)}
-                      className="p-2 text-zinc-400 hover:text-blue-400 transition-colors"
+                      className="p-2 text-zinc-400 hover:text-blue-400 transition-colors ml-1"
                       title="Edit"
                     >
                       <Edit2 className="w-4 h-4" />
@@ -384,6 +435,115 @@ export default function MinersPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {isModalOpen && selectedMiner && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="flex justify-between items-center p-6 border-b border-zinc-800">
+              <h2 className="text-xl font-semibold text-white flex items-center">
+                <Database className="w-5 h-5 mr-3 text-blue-500" />
+                Miner Details: {selectedMiner.name}
+              </h2>
+              <button
+                onClick={() => setIsModalOpen(false)}
+                className="text-zinc-400 hover:text-white transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto flex-1 space-y-8">
+              {modalLoading ? (
+                <div className="flex justify-center py-12">
+                  <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-emerald-500"></div>
+                </div>
+              ) : (
+                <>
+                  {/* Logs Section */}
+                  <div>
+                    <h3 className="text-lg font-medium text-white mb-4">Recent Logs</h3>
+                    {minerLogs.length === 0 ? (
+                      <p className="text-zinc-500 text-sm">No logs available.</p>
+                    ) : (
+                      <div className="bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden">
+                        <table className="w-full text-left text-sm">
+                          <thead className="bg-zinc-900 text-zinc-400 border-b border-zinc-800">
+                            <tr>
+                              <th className="px-4 py-2 font-medium">Timestamp</th>
+                              <th className="px-4 py-2 font-medium">Status</th>
+                              <th className="px-4 py-2 font-medium">Message</th>
+                              <th className="px-4 py-2 font-medium">IOCs Processed</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-800">
+                            {minerLogs.map((log, idx) => (
+                              <tr key={idx} className="hover:bg-zinc-900/50">
+                                <td className="px-4 py-2 font-mono text-xs text-zinc-400">
+                                  {new Date(log.timestamp).toLocaleString()}
+                                </td>
+                                <td className="px-4 py-2">
+                                  <span className={`font-medium ${log.status === 'success' ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    {log.status}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-2 text-zinc-300">{log.message}</td>
+                                <td className="px-4 py-2 font-mono text-zinc-400">{log.iocs_processed}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* IOCs Section */}
+                  <div>
+                    <h3 className="text-lg font-medium text-white mb-4">Recent IOCs</h3>
+                    {minerIocs.length === 0 ? (
+                      <p className="text-zinc-500 text-sm">No IOCs available.</p>
+                    ) : (
+                      <div className="bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden">
+                        <table className="w-full text-left text-sm">
+                          <thead className="bg-zinc-900 text-zinc-400 border-b border-zinc-800">
+                            <tr>
+                              <th className="px-4 py-2 font-medium">Value</th>
+                              <th className="px-4 py-2 font-medium">Type</th>
+                              <th className="px-4 py-2 font-medium">Confidence</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-800">
+                            {minerIocs.map((ioc, idx) => (
+                              <tr key={idx} className="hover:bg-zinc-900/50">
+                                <td className="px-4 py-2 font-mono text-zinc-200">{ioc.value}</td>
+                                <td className="px-4 py-2">
+                                  <span className="px-2 py-1 bg-zinc-800 text-zinc-300 rounded text-xs font-mono uppercase">
+                                    {ioc.type}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-2">
+                                  <div className="flex items-center">
+                                    <div className="w-16 h-1.5 bg-zinc-800 rounded-full mr-2 overflow-hidden">
+                                      <div 
+                                        className="h-full bg-emerald-500" 
+                                        style={{ width: `${ioc.confidence}%` }}
+                                      />
+                                    </div>
+                                    <span className="text-xs font-mono text-zinc-400">{ioc.confidence}</span>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

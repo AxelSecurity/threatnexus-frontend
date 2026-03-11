@@ -72,6 +72,23 @@ export const apiClient = {
     return handleResponse(res);
   },
 
+  async triggerNode(id: string): Promise<any> {
+    const res = await fetch(`${BASE_URL}/nodes/${id}/trigger`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
+  },
+
+  async getNodeLogs(id: string): Promise<any[]> {
+    const res = await fetch(`${BASE_URL}/nodes/${id}/logs`);
+    return handleResponse(res);
+  },
+
+  async getNodeIocs(id: string): Promise<any[]> {
+    const res = await fetch(`${BASE_URL}/nodes/${id}/iocs`);
+    return handleResponse(res);
+  },
+
   async getEdges(): Promise<ThreatEdge[]> {
     const res = await fetch(`${BASE_URL}/edges`);
     return handleResponse(res);
