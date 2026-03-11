@@ -123,22 +123,22 @@ export default function TopologyView() {
 
   if (loading) {
     return (
-      <div className="h-full w-full flex items-center justify-center">
+      <div className="h-[80vh] w-full flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-emerald-500"></div>
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="w-full flex flex-col">
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Topology View</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-white">Topology View</h1>
         <p className="text-zinc-400 text-sm mt-1">
           Visual representation of the Threat Intelligence data flow.
         </p>
       </div>
       
-      <div className="flex-1 border border-zinc-800 rounded-xl overflow-hidden bg-zinc-950/50 shadow-2xl">
+      <div className="w-full h-[75vh] min-h-[600px] border border-zinc-800 rounded-xl overflow-hidden bg-zinc-950 shadow-2xl">
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -160,7 +160,7 @@ export default function TopologyView() {
             maskColor="rgba(9, 9, 11, 0.8)"
             className="bg-zinc-900 border-zinc-800"
           />
-          <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#27272a" />
+          <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#444" />
         </ReactFlow>
       </div>
     </div>
