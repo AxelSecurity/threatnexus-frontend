@@ -85,7 +85,7 @@ export const apiClient = {
   },
 
   async getNodeIocs(id: string): Promise<any[]> {
-    const res = await fetch(`${BASE_URL}/nodes/${id}/iocs`);
+    const res = await fetch(`${BASE_URL}/nodes/${id}/iocs?limit=50`);
     return handleResponse(res);
   },
 

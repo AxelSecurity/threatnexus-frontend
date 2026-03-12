@@ -10,8 +10,7 @@ import { apiClient, ThreatNode } from '@/lib/api_client';
 const minerSchema = z.object({
   name: z.string().min(3, 'Name must be at least 3 characters'),
   sourceUrl: z.string().url('Must be a valid URL'),
-  parserType: z.enum(['csv', 'json', 'regex', 'stix', 'txt']),
-  fallbackIocType: z.enum(['ip', 'ipv6', 'domain', 'url', 'hash', 'email']),
+  parserType: z.enum(['csv', 'txt']),
   pollingInterval: z.string().min(1, 'Cron expression is required'),
   status: z.enum(['enabled', 'disabled']),
   authType: z.enum(['none', 'basic', 'bearer']),
@@ -59,6 +58,8 @@ export default function MinersPage() {
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
   const {
     register,
     handleSubmit,
@@ -70,8 +71,7 @@ export default function MinersPage() {
     resolver: zodResolver(minerSchema),
     defaultValues: {
       status: 'enabled',
-      parserType: 'json',
-      fallbackIocType: 'ip',
+      parserType: 'txt',
       authType: 'none',
     },
   });
@@ -110,7 +110,6 @@ export default function MinersPage() {
       const configPayload = {
         url: data.sourceUrl,
         parser: data.parserType,
-        fallback_ioc_type: data.fallbackIocType,
         polling_interval: cronToMinutes(data.pollingInterval),
         auth_type: data.authType,
         ...(data.authType === 'basic' && {
@@ -149,8 +148,7 @@ export default function MinersPage() {
     
     if (miner.config) {
       setValue('sourceUrl', miner.config.url || '');
-      setValue('parserType', miner.config.parser || 'json');
-      setValue('fallbackIocType', miner.config.fallback_ioc_type || 'ip');
+      setValue('parserType', (miner.config.parser === 'csv' || miner.config.parser === 'txt') ? miner.config.parser : 'txt');
       setValue('pollingInterval', miner.config.polling_interval ? `*/${miner.config.polling_interval} * * * *` : '0 */2 * * *');
       setValue('authType', miner.config.auth_type || 'none');
       setValue('authUsername', miner.config.auth_username || '');
@@ -158,8 +156,7 @@ export default function MinersPage() {
       setValue('authToken', miner.config.auth_token || '');
     } else {
       setValue('sourceUrl', '');
-      setValue('parserType', 'json');
-      setValue('fallbackIocType', 'ip');
+      setValue('parserType', 'txt');
       setValue('pollingInterval', '0 */2 * * *');
       setValue('authType', 'none');
       setValue('authUsername', '');
@@ -187,44 +184,57 @@ export default function MinersPage() {
     }
   };
 
-  const handleOpenInfo = async (miner: ThreatNode) => {
+  const handleOpenInfo = (miner: ThreatNode) => {
     setSelectedMiner(miner);
     setIsModalOpen(true);
-    setModalLoading(true);
-    setModalError(null);
-    setReclassifySelections({});
-    try {
-      if (miner.id) {
+  };
+
+  useEffect(() => {
+    let mounted = true;
+    const fetchModalData = async () => {
+      if (!isModalOpen || !selectedMiner?.id) return;
+      
+      setModalLoading(true);
+      setModalError(null);
+      setReclassifySelections({});
+      try {
         const [logs, iocs, unknownIocs] = await Promise.all([
-          apiClient.getNodeLogs(miner.id).catch(e => {
+          apiClient.getNodeLogs(selectedMiner.id).catch(e => {
             console.error("Logs fetch error:", e);
             throw new Error("Impossibile scaricare i Logs. Verifica che il backend sia in esecuzione e che le API /logs esistano.");
           }),
-          apiClient.getNodeIocs(miner.id).catch(e => {
+          apiClient.getNodeIocs(selectedMiner.id).catch(e => {
             console.error("IOCs fetch error:", e);
             throw new Error("Impossibile scaricare gli IOCs. Verifica che il backend sia in esecuzione e che le API /iocs esistano.");
           }),
-          apiClient.getNodeUnknownIocs(miner.id).catch(e => {
+          apiClient.getNodeUnknownIocs(selectedMiner.id).catch(e => {
             console.error("Unknown IOCs fetch error:", e);
             return []; // Fallback to empty array if endpoint fails
           })
         ]);
-        setMinerLogs(logs || []);
-        setMinerIocs(iocs || []);
-        setUnclassifiedIocs(unknownIocs || []);
+        if (mounted) {
+          setMinerLogs(logs || []);
+          setMinerIocs(iocs || []);
+          setUnclassifiedIocs(unknownIocs || []);
+        }
+      } catch (error: any) {
+        console.error('Failed to fetch miner details', error);
+        if (mounted) {
+          setModalError(error.message || "Errore di rete: Impossibile connettersi al backend (Possibile blocco CORS o Mixed Content).");
+        }
+      } finally {
+        if (mounted) setModalLoading(false);
       }
-    } catch (error: any) {
-      console.error('Failed to fetch miner details', error);
-      setModalError(error.message || "Errore di rete: Impossibile connettersi al backend (Possibile blocco CORS o Mixed Content).");
-    } finally {
-      setModalLoading(false);
-    }
-  };
+    };
+
+    fetchModalData();
+    return () => { mounted = false; };
+  }, [isModalOpen, selectedMiner?.id]);
 
   const handleReclassify = async () => {
     if (!selectedMiner?.id) return;
     
-    const selections = Object.entries(reclassifySelections).filter(([_, type]) => type !== '');
+    const selections = Object.entries(reclassifySelections).filter(([_, type]) => type !== '' && type !== '-- select --');
     if (selections.length === 0) return;
 
     // Group by type
@@ -236,8 +246,10 @@ export default function MinersPage() {
 
     setModalLoading(true);
     try {
+      let totalClassified = 0;
       for (const [type, ids] of Object.entries(grouped)) {
         await apiClient.reclassifyIocs({ ioc_ids: ids, ioc_type: type });
+        totalClassified += ids.length;
       }
       
       // Reload IOCs and Unknown IOCs
@@ -248,7 +260,9 @@ export default function MinersPage() {
       setMinerIocs(iocs || []);
       setUnclassifiedIocs(unknownIocs || []);
       setReclassifySelections({});
-      alert('IOCs reclassified successfully.');
+      
+      setToastMessage(`${totalClassified} IOC(s) classified successfully`);
+      setTimeout(() => setToastMessage(null), 3000);
     } catch (error: any) {
       console.error('Failed to reclassify IOCs', error);
       alert(`Errore nella riclassificazione: ${error.message}`);
@@ -331,37 +345,8 @@ export default function MinersPage() {
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
                 >
                   <option value="csv">CSV</option>
-                  <option value="json">JSON</option>
-                  <option value="regex">Regex</option>
-                  <option value="stix">STIX/TAXII</option>
                   <option value="txt">TXT (Plain Text List)</option>
                 </select>
-              </div>
-
-              <div>
-                <label className="flex items-center text-sm font-medium text-zinc-400 mb-1">
-                  Fallback IOC Type
-                  <div className="relative group ml-1">
-                    <HelpCircle className="w-4 h-4 text-zinc-500 cursor-help" />
-                    <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block w-64 p-2 bg-zinc-800 text-xs text-zinc-300 rounded shadow-lg z-10">
-                      ThreatNexus automatically classifies each IOC as: ip, ipv6, domain, url, hash, email. Set a fallback only if your feed contains non-standard formats.
-                    </div>
-                  </div>
-                </label>
-                <select
-                  {...register('fallbackIocType')}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                >
-                  <option value="ip">ip</option>
-                  <option value="ipv6">ipv6</option>
-                  <option value="domain">domain</option>
-                  <option value="url">url</option>
-                  <option value="hash">hash</option>
-                  <option value="email">email</option>
-                </select>
-                <p className="text-xs text-zinc-500 mt-1">
-                  The IOC type is automatically detected. This value is used only as a fallback for unrecognized indicators.
-                </p>
               </div>
 
               <div>
@@ -664,7 +649,7 @@ export default function MinersPage() {
                         <AlertCircle className="w-5 h-5 text-yellow-500 mt-0.5 mr-3 flex-shrink-0" />
                         <div>
                           <h3 className="text-sm font-medium text-yellow-500">
-                            ⚠️ {unclassifiedIocs.length} indicators could not be classified automatically.
+                            ⚠️ {unclassifiedIocs.length} indicator(s) could not be classified automatically and require manual review.
                           </h3>
                           <p className="text-sm text-yellow-500/80 mt-1">
                             Please assign a type to these indicators manually.
@@ -690,7 +675,7 @@ export default function MinersPage() {
                                     onChange={(e) => setReclassifySelections(prev => ({ ...prev, [ioc.id]: e.target.value }))}
                                     className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
                                   >
-                                    <option value="">Select type...</option>
+                                    <option value="">-- select --</option>
                                     <option value="ip">ip</option>
                                     <option value="ipv6">ipv6</option>
                                     <option value="domain">domain</option>
@@ -706,10 +691,10 @@ export default function MinersPage() {
                         <div className="p-4 border-t border-zinc-800 flex justify-end">
                           <button
                             onClick={handleReclassify}
-                            disabled={Object.values(reclassifySelections).filter(v => v !== '').length === 0}
+                            disabled={Object.values(reclassifySelections).filter(v => v !== '' && v !== '-- select --').length === 0}
                             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md font-medium text-sm transition-colors disabled:opacity-50"
                           >
-                            Apply
+                            Apply Classifications
                           </button>
                         </div>
                       </div>
@@ -762,6 +747,11 @@ export default function MinersPage() {
               )}
             </div>
           </div>
+        </div>
+      )}
+      {toastMessage && (
+        <div className="fixed bottom-4 right-4 bg-emerald-600 text-white px-4 py-3 rounded-md shadow-lg z-[60] flex items-center">
+          <span className="font-medium text-sm">{toastMessage}</span>
         </div>
       )}
     </div>
