@@ -10,16 +10,34 @@ import { apiClient, ThreatNode } from '@/lib/api_client';
 const minerSchema = z.object({
   name: z.string().min(3, 'Name must be at least 3 characters'),
   nodeType: z.enum(['miner', 'whitelist']),
-  sourceUrl: z.string().url('Must be a valid URL'),
-  parserType: z.enum(['csv', 'txt', 'json', 'stix2']),
+  iocType: z.enum(['ip', 'ipv6', 'domain', 'url', 'hash', 'email']).optional(),
+  sourceUrl: z.string().optional(),
+  parserType: z.enum(['csv', 'txt', 'json', 'stix2']).optional(),
   jsonPath: z.string().optional(),
   jsonField: z.string().optional(),
-  pollingInterval: z.string().min(1, 'Cron expression is required'),
+  pollingInterval: z.string().optional(),
   status: z.enum(['enabled', 'disabled']),
-  authType: z.enum(['none', 'basic', 'bearer']),
+  authType: z.enum(['none', 'basic', 'bearer']).optional(),
   authUsername: z.string().optional(),
   authPassword: z.string().optional(),
   authToken: z.string().optional(),
+}).superRefine((data, ctx) => {
+  if (data.nodeType === 'miner') {
+    if (!data.sourceUrl || !data.sourceUrl.startsWith('http')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Must be a valid URL',
+        path: ['sourceUrl'],
+      });
+    }
+    if (!data.pollingInterval) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Cron expression is required',
+        path: ['pollingInterval'],
+      });
+    }
+  }
 });
 
 type MinerFormValues = z.infer<typeof minerSchema>;
@@ -60,6 +78,12 @@ export default function MinersPage() {
   const [reclassifySelections, setReclassifySelections] = useState<Record<string, string>>({});
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
+  
+  // Whitelist Modal State
+  const [whitelistIocValue, setWhitelistIocValue] = useState('');
+  const [whitelistPage, setWhitelistPage] = useState(1);
+  const [uploadSummary, setUploadSummary] = useState<{ added: number, skipped: number, invalid: number } | null>(null);
+  const WHITELIST_PAGE_SIZE = 50;
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -75,8 +99,10 @@ export default function MinersPage() {
     defaultValues: {
       status: 'enabled',
       nodeType: 'miner',
+      iocType: 'domain',
       parserType: 'txt',
       authType: 'none',
+      pollingInterval: '0 */2 * * *',
     },
   });
 
@@ -113,23 +139,30 @@ export default function MinersPage() {
 
   const onSubmit = async (data: MinerFormValues) => {
     try {
-      const configPayload = {
-        url: data.sourceUrl,
-        parser: data.parserType,
-        polling_interval: cronToMinutes(data.pollingInterval),
-        auth_type: data.authType,
-        ...(data.parserType === 'json' && {
-          json_path: data.jsonPath,
-          json_field: data.jsonField,
-        }),
-        ...(data.authType === 'basic' && {
-          auth_username: data.authUsername,
-          auth_password: data.authPassword,
-        }),
-        ...(data.authType === 'bearer' && {
-          auth_token: data.authToken,
-        })
-      };
+      let configPayload: any = {};
+      if (data.nodeType === 'whitelist') {
+        configPayload = {
+          ioc_type: data.iocType,
+        };
+      } else {
+        configPayload = {
+          url: data.sourceUrl,
+          parser: data.parserType,
+          polling_interval: cronToMinutes(data.pollingInterval || '0 */2 * * *'),
+          auth_type: data.authType,
+          ...(data.parserType === 'json' && {
+            json_path: data.jsonPath,
+            json_field: data.jsonField,
+          }),
+          ...(data.authType === 'basic' && {
+            auth_username: data.authUsername,
+            auth_password: data.authPassword,
+          }),
+          ...(data.authType === 'bearer' && {
+            auth_token: data.authToken,
+          })
+        };
+      }
 
       const payload = {
         name: data.name,
@@ -157,27 +190,34 @@ export default function MinersPage() {
     setValue('nodeType', miner.node_type === 'whitelist' ? 'whitelist' : 'miner');
     setValue('status', miner.is_active ? 'enabled' : 'disabled');
     
-    if (miner.config) {
-      setValue('sourceUrl', miner.config.url || '');
-      setValue('parserType', miner.config.parser || 'txt');
-      setValue('jsonPath', miner.config.json_path || '');
-      setValue('jsonField', miner.config.json_field || '');
-      setValue('pollingInterval', miner.config.polling_interval ? `*/${miner.config.polling_interval} * * * *` : '0 */2 * * *');
-      setValue('authType', miner.config.auth_type || 'none');
-      setValue('authUsername', miner.config.auth_username || '');
-      setValue('authPassword', miner.config.auth_password || '');
-      setValue('authToken', miner.config.auth_token || '');
-    } else {
+    if (miner.node_type === 'whitelist') {
+      setValue('iocType', miner.config?.ioc_type || 'domain');
       setValue('sourceUrl', '');
-      setValue('nodeType', 'miner');
       setValue('parserType', 'txt');
-      setValue('jsonPath', '');
-      setValue('jsonField', '');
       setValue('pollingInterval', '0 */2 * * *');
       setValue('authType', 'none');
-      setValue('authUsername', '');
-      setValue('authPassword', '');
-      setValue('authToken', '');
+    } else {
+      if (miner.config) {
+        setValue('sourceUrl', miner.config.url || '');
+        setValue('parserType', miner.config.parser || 'txt');
+        setValue('jsonPath', miner.config.json_path || '');
+        setValue('jsonField', miner.config.json_field || '');
+        setValue('pollingInterval', miner.config.polling_interval ? `*/${miner.config.polling_interval} * * * *` : '0 */2 * * *');
+        setValue('authType', miner.config.auth_type || 'none');
+        setValue('authUsername', miner.config.auth_username || '');
+        setValue('authPassword', miner.config.auth_password || '');
+        setValue('authToken', miner.config.auth_token || '');
+      } else {
+        setValue('sourceUrl', '');
+        setValue('parserType', 'txt');
+        setValue('jsonPath', '');
+        setValue('jsonField', '');
+        setValue('pollingInterval', '0 */2 * * *');
+        setValue('authType', 'none');
+        setValue('authUsername', '');
+        setValue('authPassword', '');
+        setValue('authToken', '');
+      }
     }
     
     setIsFormOpen(true);
@@ -214,24 +254,37 @@ export default function MinersPage() {
       setModalError(null);
       setReclassifySelections({});
       try {
-        const [logs, iocs, unknownIocs] = await Promise.all([
-          apiClient.getNodeLogs(selectedMiner.id).catch(e => {
-            console.error("Logs fetch error:", e);
-            throw new Error("Impossibile scaricare i Logs. Verifica che il backend sia in esecuzione e che le API /logs esistano.");
-          }),
-          apiClient.getNodeIocs(selectedMiner.id).catch(e => {
+        if (selectedMiner.node_type === 'whitelist') {
+          const iocs = await apiClient.getNodeIocsWithLimit(selectedMiner.id, 1000).catch(e => {
             console.error("IOCs fetch error:", e);
-            throw new Error("Impossibile scaricare gli IOCs. Verifica che il backend sia in esecuzione e che le API /iocs esistano.");
-          }),
-          apiClient.getNodeUnknownIocs(selectedMiner.id).catch(e => {
-            console.error("Unknown IOCs fetch error:", e);
-            return []; // Fallback to empty array if endpoint fails
-          })
-        ]);
-        if (mounted) {
-          setMinerLogs(logs || []);
-          setMinerIocs(iocs || []);
-          setUnclassifiedIocs(unknownIocs || []);
+            throw new Error("Impossibile scaricare gli IOCs.");
+          });
+          if (mounted) {
+            setMinerIocs(iocs || []);
+            setWhitelistPage(1);
+            setUploadSummary(null);
+            setWhitelistIocValue('');
+          }
+        } else {
+          const [logs, iocs, unknownIocs] = await Promise.all([
+            apiClient.getNodeLogs(selectedMiner.id).catch(e => {
+              console.error("Logs fetch error:", e);
+              throw new Error("Impossibile scaricare i Logs. Verifica che il backend sia in esecuzione e che le API /logs esistano.");
+            }),
+            apiClient.getNodeIocs(selectedMiner.id).catch(e => {
+              console.error("IOCs fetch error:", e);
+              throw new Error("Impossibile scaricare gli IOCs. Verifica che il backend sia in esecuzione e che le API /iocs esistano.");
+            }),
+            apiClient.getNodeUnknownIocs(selectedMiner.id).catch(e => {
+              console.error("Unknown IOCs fetch error:", e);
+              return []; // Fallback to empty array if endpoint fails
+            })
+          ]);
+          if (mounted) {
+            setMinerLogs(logs || []);
+            setMinerIocs(iocs || []);
+            setUnclassifiedIocs(unknownIocs || []);
+          }
         }
       } catch (error: any) {
         console.error('Failed to fetch miner details', error);
@@ -245,7 +298,7 @@ export default function MinersPage() {
 
     fetchModalData();
     return () => { mounted = false; };
-  }, [isModalOpen, selectedMiner?.id]);
+  }, [isModalOpen, selectedMiner?.id, selectedMiner?.node_type]);
 
   const handleReclassify = async () => {
     if (!selectedMiner?.id) return;
@@ -282,6 +335,70 @@ export default function MinersPage() {
     } catch (error: any) {
       console.error('Failed to reclassify IOCs', error);
       alert(`Errore nella riclassificazione: ${error.message}`);
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const handleAddWhitelistIoc = async () => {
+    if (!selectedMiner?.id || !whitelistIocValue.trim()) return;
+    setModalLoading(true);
+    setModalError(null);
+    try {
+      await apiClient.addWhitelistIoc(selectedMiner.id, whitelistIocValue.trim());
+      const iocs = await apiClient.getNodeIocsWithLimit(selectedMiner.id, 1000);
+      setMinerIocs(iocs || []);
+      setWhitelistIocValue('');
+      setToastMessage('IOC added successfully');
+      setTimeout(() => setToastMessage(null), 3000);
+    } catch (error: any) {
+      if (error.message.includes('409') || error.message.toLowerCase().includes('already exists')) {
+        setModalError('This IOC already exists in the whitelist.');
+      } else {
+        setModalError(error.message);
+      }
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const handleUploadWhitelistFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedMiner?.id) return;
+    setModalLoading(true);
+    setModalError(null);
+    try {
+      const res = await apiClient.uploadWhitelistFile(selectedMiner.id, file);
+      setUploadSummary({
+        added: res.added || 0,
+        skipped: res.skipped || 0,
+        invalid: res.invalid || 0,
+      });
+      const iocs = await apiClient.getNodeIocsWithLimit(selectedMiner.id, 1000);
+      setMinerIocs(iocs || []);
+      setToastMessage('File uploaded successfully');
+      setTimeout(() => setToastMessage(null), 3000);
+    } catch (error: any) {
+      setModalError(error.message);
+    } finally {
+      setModalLoading(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleDeleteWhitelistIoc = async (iocId: string) => {
+    if (!selectedMiner?.id) return;
+    if (!confirm('Remove this IOC from the whitelist?')) return;
+    setModalLoading(true);
+    setModalError(null);
+    try {
+      await apiClient.deleteWhitelistIoc(selectedMiner.id, iocId);
+      const iocs = await apiClient.getNodeIocsWithLimit(selectedMiner.id, 1000);
+      setMinerIocs(iocs || []);
+      setToastMessage('IOC removed successfully');
+      setTimeout(() => setToastMessage(null), 3000);
+    } catch (error: any) {
+      setModalError(error.message);
     } finally {
       setModalLoading(false);
     }
@@ -360,83 +477,104 @@ export default function MinersPage() {
                   <AlertCircle className="w-5 h-5 text-yellow-500 mt-0.5 mr-3 flex-shrink-0" />
                   <div>
                     <p className="text-sm text-yellow-500/90">
-                      This Miner acts as an exclusion list. Its IOCs will be used to filter out indicators in connected Aggregators.
+                      ⚠️ Whitelist Miners act as exclusion lists. IOCs added here will be filtered out in connected Aggregators and Output Feeds.
                     </p>
                   </div>
                 </div>
               )}
+
+              {nodeType === 'whitelist' && (
+                <div>
+                  <label className="block text-sm font-medium text-zinc-400 mb-1">IOC Type</label>
+                  <select
+                    {...register('iocType')}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                  >
+                    <option value="ip">IP</option>
+                    <option value="ipv6">IPv6</option>
+                    <option value="domain">Domain</option>
+                    <option value="url">URL</option>
+                    <option value="hash">Hash</option>
+                    <option value="email">Email</option>
+                  </select>
+                </div>
+              )}
               
-              <div>
-                <label className="block text-sm font-medium text-zinc-400 mb-1">Source URL</label>
-                <input
-                  {...register('sourceUrl')}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                  placeholder="https://..."
-                />
-                {errors.sourceUrl && <p className="text-red-400 text-xs mt-1">{errors.sourceUrl.message}</p>}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-zinc-400 mb-1">Parser Type</label>
-                <select
-                  {...register('parserType')}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                >
-                  <option value="csv">CSV</option>
-                  <option value="txt">TXT (Plain Text List)</option>
-                  <option value="json">JSON (API Response)</option>
-                  <option value="stix2">STIX 2.x Bundle</option>
-                </select>
-              </div>
-
-              {parserType === 'json' && (
+              {nodeType === 'miner' && (
                 <>
                   <div>
-                    <label className="block text-sm font-medium text-zinc-400 mb-1">JSON Path</label>
+                    <label className="block text-sm font-medium text-zinc-400 mb-1">Source URL</label>
                     <input
-                      {...register('jsonPath')}
+                      {...register('sourceUrl')}
                       className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                      placeholder="e.g., data or results.indicators"
+                      placeholder="https://..."
                     />
-                    <p className="text-xs text-zinc-500 mt-1">
-                      Dot-notation path to the array of indicators. Leave empty if the root is already an array.
-                    </p>
+                    {errors.sourceUrl && <p className="text-red-400 text-xs mt-1">{errors.sourceUrl.message}</p>}
                   </div>
+
                   <div>
-                    <label className="block text-sm font-medium text-zinc-400 mb-1">JSON Field</label>
-                    <input
-                      {...register('jsonField')}
+                    <label className="block text-sm font-medium text-zinc-400 mb-1">Parser Type</label>
+                    <select
+                      {...register('parserType')}
                       className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                      placeholder="e.g., value or indicator"
+                    >
+                      <option value="csv">CSV</option>
+                      <option value="txt">TXT (Plain Text List)</option>
+                      <option value="json">JSON (API Response)</option>
+                      <option value="stix2">STIX 2.x Bundle</option>
+                    </select>
+                  </div>
+
+                  {parserType === 'json' && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-zinc-400 mb-1">JSON Path</label>
+                        <input
+                          {...register('jsonPath')}
+                          className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                          placeholder="e.g., data or results.indicators"
+                        />
+                        <p className="text-xs text-zinc-500 mt-1">
+                          Dot-notation path to the array of indicators. Leave empty if the root is already an array.
+                        </p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-zinc-400 mb-1">JSON Field</label>
+                        <input
+                          {...register('jsonField')}
+                          className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                          placeholder="e.g., value or indicator"
+                        />
+                        <p className="text-xs text-zinc-500 mt-1">
+                          Key containing the IOC value in each object. Leave empty if each element is a plain string.
+                        </p>
+                      </div>
+                    </>
+                  )}
+
+                  <div>
+                    <label className="block text-sm font-medium text-zinc-400 mb-1">Polling Interval (Cron)</label>
+                    <input
+                      {...register('pollingInterval')}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                      placeholder="0 */2 * * *"
                     />
-                    <p className="text-xs text-zinc-500 mt-1">
-                      Key containing the IOC value in each object. Leave empty if each element is a plain string.
-                    </p>
+                    {errors.pollingInterval && <p className="text-red-400 text-xs mt-1">{errors.pollingInterval.message}</p>}
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-zinc-400 mb-1">Authentication Type</label>
+                    <select
+                      {...register('authType')}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                    >
+                      <option value="none">None</option>
+                      <option value="basic">Basic Auth</option>
+                      <option value="bearer">Bearer Token</option>
+                    </select>
                   </div>
                 </>
               )}
-
-              <div>
-                <label className="block text-sm font-medium text-zinc-400 mb-1">Polling Interval (Cron)</label>
-                <input
-                  {...register('pollingInterval')}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                  placeholder="0 */2 * * *"
-                />
-                {errors.pollingInterval && <p className="text-red-400 text-xs mt-1">{errors.pollingInterval.message}</p>}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-zinc-400 mb-1">Authentication Type</label>
-                <select
-                  {...register('authType')}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                >
-                  <option value="none">None</option>
-                  <option value="basic">Basic Auth</option>
-                  <option value="bearer">Bearer Token</option>
-                </select>
-              </div>
 
               <div>
                 <label className="block text-sm font-medium text-zinc-400 mb-1">Status</label>
@@ -449,7 +587,7 @@ export default function MinersPage() {
                 </select>
               </div>
 
-              {authType === 'basic' && (
+              {nodeType === 'miner' && authType === 'basic' && (
                 <>
                   <div>
                     <label className="block text-sm font-medium text-zinc-400 mb-1">Username</label>
@@ -471,7 +609,7 @@ export default function MinersPage() {
                 </>
               )}
 
-              {authType === 'bearer' && (
+              {nodeType === 'miner' && authType === 'bearer' && (
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-zinc-400 mb-1">Token</label>
                   <input
@@ -541,32 +679,48 @@ export default function MinersPage() {
                     </div>
                   </td>
                   <td className="px-6 py-4 text-zinc-400 truncate max-w-[200px]" title={miner.config?.url}>
-                    {miner.config?.url}
+                    {miner.node_type === 'whitelist' ? '—' : miner.config?.url}
                   </td>
                   <td className="px-6 py-4">
-                    <span className="px-2 py-1 bg-zinc-800 text-zinc-300 rounded text-xs font-mono uppercase">
-                      {miner.config?.parser}
-                    </span>
+                    {miner.node_type === 'whitelist' ? (
+                      <span className={`px-2 py-1 border rounded text-xs font-mono uppercase ${getBadgeColor(miner.config?.ioc_type)}`}>
+                        {miner.config?.ioc_type || 'unknown'}
+                      </span>
+                    ) : (
+                      <span className="px-2 py-1 bg-zinc-800 text-zinc-300 rounded text-xs font-mono uppercase">
+                        {miner.config?.parser}
+                      </span>
+                    )}
                   </td>
-                  <td className="px-6 py-4 font-mono text-xs text-zinc-400">{miner.config?.polling_interval ? `${miner.config.polling_interval} min` : 'N/A'}</td>
+                  <td className="px-6 py-4 font-mono text-xs text-zinc-400">
+                    {miner.node_type === 'whitelist' ? '—' : (miner.config?.polling_interval ? `${miner.config.polling_interval} min` : 'N/A')}
+                  </td>
                   <td className="px-6 py-4">
-                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                      miner.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
-                    }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
-                        miner.is_active ? 'bg-emerald-400' : 'bg-red-400'
-                      }`}></span>
-                      {miner.is_active ? 'enabled' : 'disabled'}
-                    </span>
+                    {miner.node_type === 'whitelist' ? (
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-500/10 text-yellow-500 border border-yellow-500/20">
+                        WHITELIST
+                      </span>
+                    ) : (
+                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                        miner.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
+                          miner.is_active ? 'bg-emerald-400' : 'bg-red-400'
+                        }`}></span>
+                        {miner.is_active ? 'enabled' : 'disabled'}
+                      </span>
+                    )}
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <button
-                      onClick={() => miner.id && handleRunNow(miner.id)}
-                      className="p-2 text-zinc-400 hover:text-emerald-400 transition-colors"
-                      title="Run Now"
-                    >
-                      <Play className="w-4 h-4" />
-                    </button>
+                    {miner.node_type !== 'whitelist' && (
+                      <button
+                        onClick={() => miner.id && handleRunNow(miner.id)}
+                        className="p-2 text-zinc-400 hover:text-emerald-400 transition-colors"
+                        title="Run Now"
+                      >
+                        <Play className="w-4 h-4" />
+                      </button>
+                    )}
                     <button
                       onClick={() => handleOpenInfo(miner)}
                       className="p-2 text-zinc-400 hover:text-blue-400 transition-colors ml-1"
@@ -601,8 +755,20 @@ export default function MinersPage() {
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
             <div className="flex justify-between items-center p-6 border-b border-zinc-800">
               <h2 className="text-xl font-semibold text-white flex items-center">
-                <Database className="w-5 h-5 mr-3 text-blue-500" />
-                Miner Details: {selectedMiner.name}
+                {selectedMiner.node_type === 'whitelist' ? (
+                  <>
+                    <Database className="w-5 h-5 mr-3 text-yellow-500" />
+                    Whitelist: {selectedMiner.name}
+                    <span className="ml-3 px-2 py-0.5 bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 rounded text-xs font-bold tracking-wider">
+                      WHITELIST
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Database className="w-5 h-5 mr-3 text-blue-500" />
+                    Miner Details: {selectedMiner.name}
+                  </>
+                )}
               </h2>
               <button
                 onClick={() => setIsModalOpen(false)}
@@ -613,6 +779,21 @@ export default function MinersPage() {
             </div>
             
             <div className="p-6 overflow-y-auto flex-1 space-y-8">
+              {selectedMiner.node_type === 'whitelist' && (
+                <div className="flex items-center gap-4 mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-zinc-400">IOC Type:</span>
+                    <span className={`px-2 py-0.5 border rounded text-xs font-mono uppercase ${getBadgeColor(selectedMiner.config?.ioc_type)}`}>
+                      {selectedMiner.config?.ioc_type || 'unknown'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-zinc-400">Total Entries:</span>
+                    <span className="text-sm font-medium text-zinc-200">{minerIocs.length}</span>
+                  </div>
+                </div>
+              )}
+
               {modalLoading ? (
                 <div className="flex justify-center py-12">
                   <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-emerald-500"></div>
@@ -625,6 +806,132 @@ export default function MinersPage() {
                     <p className="text-sm text-red-400/80 mt-1">{modalError}</p>
                   </div>
                 </div>
+              ) : selectedMiner.node_type === 'whitelist' ? (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Add IOC Manually */}
+                    <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-5">
+                      <h3 className="text-sm font-medium text-white mb-3">Add IOC Manually</h3>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={whitelistIocValue}
+                          onChange={(e) => setWhitelistIocValue(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleAddWhitelistIoc()}
+                          placeholder="e.g. evil.com, 1.2.3.4"
+                          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                        />
+                        <button
+                          onClick={handleAddWhitelistIoc}
+                          disabled={!whitelistIocValue.trim()}
+                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md font-medium text-sm transition-colors disabled:opacity-50"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Upload TXT File */}
+                    <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-5">
+                      <h3 className="text-sm font-medium text-white mb-3">Upload TXT File</h3>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="file"
+                          accept=".txt"
+                          onChange={handleUploadWhitelistFile}
+                          className="block w-full text-sm text-zinc-400
+                            file:mr-4 file:py-2 file:px-4
+                            file:rounded-md file:border-0
+                            file:text-sm file:font-medium
+                            file:bg-blue-600 file:text-white
+                            hover:file:bg-blue-500
+                            file:cursor-pointer cursor-pointer"
+                        />
+                      </div>
+                      {uploadSummary && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <span className="px-2 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-xs font-medium">
+                            ✅ Added: {uploadSummary.added}
+                          </span>
+                          <span className="px-2 py-1 bg-zinc-800 text-zinc-300 border border-zinc-700 rounded text-xs font-medium">
+                            ⏭️ Skipped (duplicates): {uploadSummary.skipped}
+                          </span>
+                          {uploadSummary.invalid > 0 && (
+                            <span className="px-2 py-1 bg-red-500/10 text-red-400 border border-red-500/20 rounded text-xs font-medium">
+                              ⚠️ Invalid: {uploadSummary.invalid}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Whitelist Entries */}
+                  <div>
+                    <h3 className="text-lg font-medium text-white mb-4">Whitelist Entries</h3>
+                    {minerIocs.length === 0 ? (
+                      <p className="text-zinc-500 text-sm">No entries in this whitelist.</p>
+                    ) : (
+                      <div className="bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden flex flex-col">
+                        <table className="w-full text-left text-sm">
+                          <thead className="bg-zinc-900 text-zinc-400 border-b border-zinc-800">
+                            <tr>
+                              <th className="px-4 py-3 font-medium">Value</th>
+                              <th className="px-4 py-3 font-medium">Type</th>
+                              <th className="px-4 py-3 font-medium text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-800">
+                            {minerIocs.slice((whitelistPage - 1) * WHITELIST_PAGE_SIZE, whitelistPage * WHITELIST_PAGE_SIZE).map((ioc, idx) => (
+                              <tr key={ioc.id || idx} className="hover:bg-zinc-900/50">
+                                <td className="px-4 py-3 font-mono text-zinc-200">{ioc.value}</td>
+                                <td className="px-4 py-3">
+                                  <span className={`px-2 py-1 border rounded text-xs font-mono uppercase ${getBadgeColor(ioc.type)}`}>
+                                    {ioc.type}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                  <button
+                                    onClick={() => ioc.id && handleDeleteWhitelistIoc(ioc.id)}
+                                    className="p-1.5 text-zinc-500 hover:text-red-400 transition-colors rounded hover:bg-zinc-800"
+                                    title="Remove"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        
+                        {/* Pagination */}
+                        {minerIocs.length > WHITELIST_PAGE_SIZE && (
+                          <div className="p-3 border-t border-zinc-800 flex items-center justify-between bg-zinc-900/50">
+                            <span className="text-xs text-zinc-500">
+                              Showing {(whitelistPage - 1) * WHITELIST_PAGE_SIZE + 1} to {Math.min(whitelistPage * WHITELIST_PAGE_SIZE, minerIocs.length)} of {minerIocs.length}
+                            </span>
+                            <div className="flex gap-1">
+                              <button
+                                onClick={() => setWhitelistPage(p => Math.max(1, p - 1))}
+                                disabled={whitelistPage === 1}
+                                className="px-2 py-1 bg-zinc-800 text-zinc-300 rounded text-xs disabled:opacity-50 hover:bg-zinc-700 transition-colors"
+                              >
+                                Prev
+                              </button>
+                              <button
+                                onClick={() => setWhitelistPage(p => Math.min(Math.ceil(minerIocs.length / WHITELIST_PAGE_SIZE), p + 1))}
+                                disabled={whitelistPage >= Math.ceil(minerIocs.length / WHITELIST_PAGE_SIZE)}
+                                className="px-2 py-1 bg-zinc-800 text-zinc-300 rounded text-xs disabled:opacity-50 hover:bg-zinc-700 transition-colors"
+                              >
+                                Next
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </>
               ) : (
                 <>
                   {/* Logs Section */}

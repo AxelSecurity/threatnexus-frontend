@@ -89,6 +89,37 @@ export const apiClient = {
     return handleResponse(res);
   },
 
+  async getNodeIocsWithLimit(id: string, limit: number = 1000): Promise<any[]> {
+    const res = await fetch(`${BASE_URL}/nodes/${id}/iocs?limit=${limit}`);
+    return handleResponse(res);
+  },
+
+  async addWhitelistIoc(nodeId: string, value: string): Promise<any> {
+    const res = await fetch(`${BASE_URL}/nodes/${nodeId}/whitelist/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value }),
+    });
+    return handleResponse(res);
+  },
+
+  async uploadWhitelistFile(nodeId: string, file: File): Promise<any> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`${BASE_URL}/nodes/${nodeId}/whitelist/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    return handleResponse(res);
+  },
+
+  async deleteWhitelistIoc(nodeId: string, iocId: string): Promise<void> {
+    const res = await fetch(`${BASE_URL}/nodes/${nodeId}/whitelist/${iocId}`, {
+      method: 'DELETE',
+    });
+    return handleResponse(res);
+  },
+
   async getNodeUnknownIocs(id: string): Promise<any[]> {
     const res = await fetch(`${BASE_URL}/nodes/${id}/iocs/unknown`);
     return handleResponse(res);
