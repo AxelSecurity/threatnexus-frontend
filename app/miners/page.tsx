@@ -54,6 +54,7 @@ export default function MinersPage() {
   const [minerLogs, setMinerLogs] = useState<any[]>([]);
   const [minerIocs, setMinerIocs] = useState<any[]>([]);
   const [modalLoading, setModalLoading] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
 
   const {
     register,
@@ -183,17 +184,25 @@ export default function MinersPage() {
     setSelectedMiner(miner);
     setIsModalOpen(true);
     setModalLoading(true);
+    setModalError(null);
     try {
       if (miner.id) {
         const [logs, iocs] = await Promise.all([
-          apiClient.getNodeLogs(miner.id),
-          apiClient.getNodeIocs(miner.id)
+          apiClient.getNodeLogs(miner.id).catch(e => {
+            console.error("Logs fetch error:", e);
+            throw new Error("Impossibile scaricare i Logs. Verifica che il backend sia in esecuzione e che le API /logs esistano.");
+          }),
+          apiClient.getNodeIocs(miner.id).catch(e => {
+            console.error("IOCs fetch error:", e);
+            throw new Error("Impossibile scaricare gli IOCs. Verifica che il backend sia in esecuzione e che le API /iocs esistano.");
+          })
         ]);
-        setMinerLogs(logs);
-        setMinerIocs(iocs);
+        setMinerLogs(logs || []);
+        setMinerIocs(iocs || []);
       }
     } catch (error: any) {
       console.error('Failed to fetch miner details', error);
+      setModalError(error.message || "Errore di rete: Impossibile connettersi al backend (Possibile blocco CORS o Mixed Content).");
     } finally {
       setModalLoading(false);
     }
@@ -458,6 +467,14 @@ export default function MinersPage() {
               {modalLoading ? (
                 <div className="flex justify-center py-12">
                   <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-emerald-500"></div>
+                </div>
+              ) : modalError ? (
+                <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 flex items-start">
+                  <AlertCircle className="w-5 h-5 text-red-400 mt-0.5 mr-3 flex-shrink-0" />
+                  <div>
+                    <h3 className="text-sm font-medium text-red-400">Errore di connessione</h3>
+                    <p className="text-sm text-red-400/80 mt-1">{modalError}</p>
+                  </div>
                 </div>
               ) : (
                 <>
