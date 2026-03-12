@@ -19,9 +19,14 @@ import {
 import '@xyflow/react/dist/style.css';
 import { apiClient, ThreatNode, ThreatEdge } from '@/lib/api_client';
 import { CustomNode } from '@/components/custom-node';
+import { CustomEdge } from '@/components/custom-edge';
 
 const nodeTypes = {
   custom: CustomNode,
+};
+
+const edgeTypes = {
+  custom: CustomEdge,
 };
 
 export default function TopologyView() {
@@ -33,6 +38,18 @@ export default function TopologyView() {
   useEffect(() => {
     nodesRef.current = nodes;
   }, [nodes]);
+
+  const onDeleteEdge = useCallback(async (edgeId: string) => {
+    try {
+      if (!edgeId.startsWith('reactflow')) {
+        await apiClient.deleteEdge(edgeId);
+      }
+      setEdges((eds) => eds.filter((e) => e.id !== edgeId));
+    } catch (error: any) {
+      console.error(`Failed to delete edge ${edgeId}`, error);
+      alert(`Errore nell'eliminazione del collegamento: ${error.message}`);
+    }
+  }, [setEdges]);
 
   const loadGraph = useCallback(async () => {
     try {
@@ -100,8 +117,10 @@ export default function TopologyView() {
           id: String(edge.id), // Use the DB edge ID
           source: String(edge.source_id),
           target: String(edge.target_id),
+          type: 'custom',
           animated: true,
           style: { stroke: '#52525b', strokeWidth: 2 },
+          data: { onDelete: onDeleteEdge },
         });
       });
 
@@ -113,7 +132,7 @@ export default function TopologyView() {
     } finally {
       setLoading(false);
     }
-  }, [setNodes, setEdges]);
+  }, [setNodes, setEdges, onDeleteEdge]);
 
   useEffect(() => {
     loadGraph();
@@ -153,8 +172,10 @@ export default function TopologyView() {
             target: params.target,
             sourceHandle: params.sourceHandle,
             targetHandle: params.targetHandle,
+            type: 'custom',
             animated: true,
-            style: { stroke: '#52525b', strokeWidth: 2 }
+            style: { stroke: '#52525b', strokeWidth: 2 },
+            data: { onDelete: onDeleteEdge },
           }
         ]);
       } catch (error: any) {
@@ -162,7 +183,7 @@ export default function TopologyView() {
         alert(`Errore nella creazione del collegamento: ${error.message}`);
       }
     },
-    [setEdges]
+    [setEdges, onDeleteEdge]
   );
 
   const onEdgesDelete = useCallback(
@@ -208,6 +229,7 @@ export default function TopologyView() {
           onConnect={onConnect}
           onEdgesDelete={onEdgesDelete}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           fitView
           className="dark"
         >
