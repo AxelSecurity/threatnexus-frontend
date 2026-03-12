@@ -54,6 +54,8 @@ export default function MinersPage() {
   const [selectedMiner, setSelectedMiner] = useState<ThreatNode | null>(null);
   const [minerLogs, setMinerLogs] = useState<any[]>([]);
   const [minerIocs, setMinerIocs] = useState<any[]>([]);
+  const [unclassifiedIocs, setUnclassifiedIocs] = useState<any[]>([]);
+  const [reclassifySelections, setReclassifySelections] = useState<Record<string, string>>({});
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
@@ -190,9 +192,10 @@ export default function MinersPage() {
     setIsModalOpen(true);
     setModalLoading(true);
     setModalError(null);
+    setReclassifySelections({});
     try {
       if (miner.id) {
-        const [logs, iocs] = await Promise.all([
+        const [logs, iocs, unknownIocs] = await Promise.all([
           apiClient.getNodeLogs(miner.id).catch(e => {
             console.error("Logs fetch error:", e);
             throw new Error("Impossibile scaricare i Logs. Verifica che il backend sia in esecuzione e che le API /logs esistano.");
@@ -200,16 +203,70 @@ export default function MinersPage() {
           apiClient.getNodeIocs(miner.id).catch(e => {
             console.error("IOCs fetch error:", e);
             throw new Error("Impossibile scaricare gli IOCs. Verifica che il backend sia in esecuzione e che le API /iocs esistano.");
+          }),
+          apiClient.getNodeUnknownIocs(miner.id).catch(e => {
+            console.error("Unknown IOCs fetch error:", e);
+            return []; // Fallback to empty array if endpoint fails
           })
         ]);
         setMinerLogs(logs || []);
         setMinerIocs(iocs || []);
+        setUnclassifiedIocs(unknownIocs || []);
       }
     } catch (error: any) {
       console.error('Failed to fetch miner details', error);
       setModalError(error.message || "Errore di rete: Impossibile connettersi al backend (Possibile blocco CORS o Mixed Content).");
     } finally {
       setModalLoading(false);
+    }
+  };
+
+  const handleReclassify = async () => {
+    if (!selectedMiner?.id) return;
+    
+    const selections = Object.entries(reclassifySelections).filter(([_, type]) => type !== '');
+    if (selections.length === 0) return;
+
+    // Group by type
+    const grouped: Record<string, string[]> = {};
+    for (const [id, type] of selections) {
+      if (!grouped[type]) grouped[type] = [];
+      grouped[type].push(id);
+    }
+
+    setModalLoading(true);
+    try {
+      for (const [type, ids] of Object.entries(grouped)) {
+        await apiClient.reclassifyIocs({ ioc_ids: ids, ioc_type: type });
+      }
+      
+      // Reload IOCs and Unknown IOCs
+      const [iocs, unknownIocs] = await Promise.all([
+        apiClient.getNodeIocs(selectedMiner.id),
+        apiClient.getNodeUnknownIocs(selectedMiner.id)
+      ]);
+      setMinerIocs(iocs || []);
+      setUnclassifiedIocs(unknownIocs || []);
+      setReclassifySelections({});
+      alert('IOCs reclassified successfully.');
+    } catch (error: any) {
+      console.error('Failed to reclassify IOCs', error);
+      alert(`Errore nella riclassificazione: ${error.message}`);
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const getBadgeColor = (type: string) => {
+    switch (type?.toLowerCase()) {
+      case 'domain': return 'bg-green-500/10 text-green-400 border-green-500/20';
+      case 'ip': return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
+      case 'ipv6': return 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20';
+      case 'hash': return 'bg-orange-500/10 text-orange-400 border-orange-500/20';
+      case 'url': return 'bg-purple-500/10 text-purple-400 border-purple-500/20';
+      case 'email': return 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20';
+      case 'unknown': return 'bg-red-500/10 text-red-400 border-red-500/20';
+      default: return 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20';
     }
   };
 
@@ -545,14 +602,14 @@ export default function MinersPage() {
                                 const fallbackType = fallbackMatch ? fallbackMatch[1] : '';
                                 const fallbackCount = fallbackMatch ? parseInt(fallbackMatch[2], 10) : 0;
 
-                                const getBadgeColor = (type: string) => {
+                                const getLogBadgeColor = (type: string) => {
                                   switch (type.toLowerCase()) {
                                     case 'domain': return 'bg-green-500/10 text-green-400 border-green-500/20';
                                     case 'ip': return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
                                     case 'ipv6': return 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20';
                                     case 'hash': return 'bg-orange-500/10 text-orange-400 border-orange-500/20';
                                     case 'url': return 'bg-purple-500/10 text-purple-400 border-purple-500/20';
-                                    case 'email': return 'bg-pink-500/10 text-pink-400 border-pink-500/20';
+                                    case 'email': return 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20';
                                     default: return 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20';
                                   }
                                 };
@@ -564,7 +621,7 @@ export default function MinersPage() {
                                       {typeEntries.map((entry: string, i: number) => {
                                         const [type, count] = entry.split(':').map((s: string) => s.trim());
                                         return (
-                                          <span key={i} className={`px-2 py-0.5 text-xs font-medium border rounded-full ${getBadgeColor(type)}`}>
+                                          <span key={i} className={`px-2 py-0.5 text-xs font-medium border rounded-full ${getLogBadgeColor(type)}`}>
                                             {type}: {count}
                                           </span>
                                         );
@@ -600,6 +657,65 @@ export default function MinersPage() {
                     )}
                   </div>
 
+                  {/* Unclassified IOCs Section */}
+                  {unclassifiedIocs.length > 0 && (
+                    <div>
+                      <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4 mb-4 flex items-start">
+                        <AlertCircle className="w-5 h-5 text-yellow-500 mt-0.5 mr-3 flex-shrink-0" />
+                        <div>
+                          <h3 className="text-sm font-medium text-yellow-500">
+                            ⚠️ {unclassifiedIocs.length} indicators could not be classified automatically.
+                          </h3>
+                          <p className="text-sm text-yellow-500/80 mt-1">
+                            Please assign a type to these indicators manually.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden">
+                        <table className="w-full text-left text-sm">
+                          <thead className="bg-zinc-900 text-zinc-400 border-b border-zinc-800">
+                            <tr>
+                              <th className="px-4 py-2 font-medium">Value</th>
+                              <th className="px-4 py-2 font-medium">Assign Type</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-800">
+                            {unclassifiedIocs.map((ioc, idx) => (
+                              <tr key={idx} className="hover:bg-zinc-900/50">
+                                <td className="px-4 py-2 font-mono text-zinc-200">{ioc.value}</td>
+                                <td className="px-4 py-2">
+                                  <select
+                                    value={reclassifySelections[ioc.id] || ''}
+                                    onChange={(e) => setReclassifySelections(prev => ({ ...prev, [ioc.id]: e.target.value }))}
+                                    className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                  >
+                                    <option value="">Select type...</option>
+                                    <option value="ip">ip</option>
+                                    <option value="ipv6">ipv6</option>
+                                    <option value="domain">domain</option>
+                                    <option value="url">url</option>
+                                    <option value="hash">hash</option>
+                                    <option value="email">email</option>
+                                  </select>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <div className="p-4 border-t border-zinc-800 flex justify-end">
+                          <button
+                            onClick={handleReclassify}
+                            disabled={Object.values(reclassifySelections).filter(v => v !== '').length === 0}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md font-medium text-sm transition-colors disabled:opacity-50"
+                          >
+                            Apply
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* IOCs Section */}
                   <div>
                     <h3 className="text-lg font-medium text-white mb-4">Recent IOCs</h3>
@@ -620,7 +736,7 @@ export default function MinersPage() {
                               <tr key={idx} className="hover:bg-zinc-900/50">
                                 <td className="px-4 py-2 font-mono text-zinc-200">{ioc.value}</td>
                                 <td className="px-4 py-2">
-                                  <span className="px-2 py-1 bg-zinc-800 text-zinc-300 rounded text-xs font-mono uppercase">
+                                  <span className={`px-2 py-1 border rounded text-xs font-mono uppercase ${getBadgeColor(ioc.type)}`}>
                                     {ioc.type}
                                   </span>
                                 </td>

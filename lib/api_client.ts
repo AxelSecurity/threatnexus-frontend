@@ -89,6 +89,20 @@ export const apiClient = {
     return handleResponse(res);
   },
 
+  async getNodeUnknownIocs(id: string): Promise<any[]> {
+    const res = await fetch(`${BASE_URL}/nodes/${id}/iocs/unknown`);
+    return handleResponse(res);
+  },
+
+  async reclassifyIocs(payload: { ioc_ids: string[], ioc_type: string }): Promise<any> {
+    const res = await fetch(`${BASE_URL}/iocs/reclassify`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
   async getEdges(): Promise<ThreatEdge[]> {
     const res = await fetch(`${BASE_URL}/edges`);
     return handleResponse(res);
