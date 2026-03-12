@@ -9,6 +9,7 @@ import { apiClient, ThreatNode } from '@/lib/api_client';
 
 const minerSchema = z.object({
   name: z.string().min(3, 'Name must be at least 3 characters'),
+  nodeType: z.enum(['miner', 'whitelist']),
   sourceUrl: z.string().url('Must be a valid URL'),
   parserType: z.enum(['csv', 'txt', 'json', 'stix2']),
   jsonPath: z.string().optional(),
@@ -73,6 +74,7 @@ export default function MinersPage() {
     resolver: zodResolver(minerSchema),
     defaultValues: {
       status: 'enabled',
+      nodeType: 'miner',
       parserType: 'txt',
       authType: 'none',
     },
@@ -80,12 +82,13 @@ export default function MinersPage() {
 
   const authType = watch('authType');
   const parserType = watch('parserType');
+  const nodeType = watch('nodeType');
 
   const loadMiners = async () => {
     setLoading(true);
     try {
       const nodes = await apiClient.getNodes();
-      setMiners(nodes.filter((n) => n.node_type === 'miner'));
+      setMiners(nodes.filter((n) => n.node_type === 'miner' || n.node_type === 'whitelist'));
     } finally {
       setLoading(false);
     }
@@ -98,7 +101,7 @@ export default function MinersPage() {
       try {
         const nodes = await apiClient.getNodes();
         if (mounted) {
-          setMiners(nodes.filter((n) => n.node_type === 'miner'));
+          setMiners(nodes.filter((n) => n.node_type === 'miner' || n.node_type === 'whitelist'));
         }
       } finally {
         if (mounted) setLoading(false);
@@ -130,7 +133,7 @@ export default function MinersPage() {
 
       const payload = {
         name: data.name,
-        node_type: 'miner' as const,
+        node_type: data.nodeType,
         is_active: data.status === 'enabled',
         config: configPayload,
       };
@@ -151,6 +154,7 @@ export default function MinersPage() {
   const handleEdit = (miner: ThreatNode) => {
     setEditingId(miner.id || null);
     setValue('name', miner.name);
+    setValue('nodeType', miner.node_type === 'whitelist' ? 'whitelist' : 'miner');
     setValue('status', miner.is_active ? 'enabled' : 'disabled');
     
     if (miner.config) {
@@ -165,6 +169,7 @@ export default function MinersPage() {
       setValue('authToken', miner.config.auth_token || '');
     } else {
       setValue('sourceUrl', '');
+      setValue('nodeType', 'miner');
       setValue('parserType', 'txt');
       setValue('jsonPath', '');
       setValue('jsonField', '');
@@ -338,6 +343,28 @@ export default function MinersPage() {
                 />
                 {errors.name && <p className="text-red-400 text-xs mt-1">{errors.name.message}</p>}
               </div>
+
+              <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-1">Node Type</label>
+                <select
+                  {...register('nodeType')}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                >
+                  <option value="miner">Standard Miner</option>
+                  <option value="whitelist">Whitelist Miner</option>
+                </select>
+              </div>
+
+              {nodeType === 'whitelist' && (
+                <div className="md:col-span-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4 flex items-start">
+                  <AlertCircle className="w-5 h-5 text-yellow-500 mt-0.5 mr-3 flex-shrink-0" />
+                  <div>
+                    <p className="text-sm text-yellow-500/90">
+                      This Miner acts as an exclusion list. Its IOCs will be used to filter out indicators in connected Aggregators.
+                    </p>
+                  </div>
+                </div>
+              )}
               
               <div>
                 <label className="block text-sm font-medium text-zinc-400 mb-1">Source URL</label>
@@ -503,7 +530,16 @@ export default function MinersPage() {
             <tbody className="divide-y divide-zinc-800">
               {miners.map((miner) => (
                 <tr key={miner.id} className="hover:bg-zinc-800/50 transition-colors">
-                  <td className="px-6 py-4 font-medium text-zinc-200">{miner.name}</td>
+                  <td className="px-6 py-4 font-medium text-zinc-200">
+                    <div className="flex items-center gap-2">
+                      {miner.name}
+                      {miner.node_type === 'whitelist' && (
+                        <span className="px-2 py-0.5 bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 rounded text-[10px] font-bold tracking-wider">
+                          WHITELIST
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-6 py-4 text-zinc-400 truncate max-w-[200px]" title={miner.config?.url}>
                     {miner.config?.url}
                   </td>

@@ -10,9 +10,9 @@ import { apiClient, ThreatNode, ThreatEdge } from '@/lib/api_client';
 const aggregatorSchema = z.object({
   name: z.string().min(3, 'Name must be at least 3 characters'),
   inputMiners: z.array(z.string()).min(1, 'Select at least one input miner'),
-  agingRules: z.number().min(1, 'TTL must be at least 1 day'),
-  confidenceOverride: z.number().min(0).max(100),
-  whitelist: z.string().optional(),
+  iocTypes: z.array(z.string()),
+  daysToLive: z.number().min(1, 'TTL must be at least 1 day').max(365, 'TTL cannot exceed 365 days'),
+  confidenceOverride: z.number().min(0).max(100).optional().nullable(),
   status: z.enum(['enabled', 'disabled']),
 });
 
@@ -36,10 +36,10 @@ export default function AggregatorsPage() {
     resolver: zodResolver(aggregatorSchema),
     defaultValues: {
       status: 'enabled',
-      agingRules: 30,
-      confidenceOverride: 50,
+      daysToLive: 30,
+      confidenceOverride: null,
       inputMiners: [],
-      whitelist: '',
+      iocTypes: [],
     },
   });
 
@@ -59,7 +59,7 @@ export default function AggregatorsPage() {
         apiClient.getEdges()
       ]);
       setAggregators(nodes.filter((n) => n.node_type === 'aggregator'));
-      setAvailableMiners(nodes.filter((n) => n.node_type === 'miner'));
+      setAvailableMiners(nodes.filter((n) => n.node_type === 'miner' || n.node_type === 'whitelist'));
       setEdges(allEdges);
     } finally {
       setLoading(false);
@@ -77,7 +77,7 @@ export default function AggregatorsPage() {
         ]);
         if (mounted) {
           setAggregators(nodes.filter((n) => n.node_type === 'aggregator'));
-          setAvailableMiners(nodes.filter((n) => n.node_type === 'miner'));
+          setAvailableMiners(nodes.filter((n) => n.node_type === 'miner' || n.node_type === 'whitelist'));
           setEdges(allEdges);
         }
       } finally {
@@ -90,12 +90,15 @@ export default function AggregatorsPage() {
 
   const onSubmit = async (data: AggregatorFormValues) => {
     try {
-      const configPayload = {
+      const configPayload: any = {
         inputMiners: data.inputMiners,
-        agingRules: data.agingRules,
-        confidenceOverride: data.confidenceOverride,
-        whitelist: data.whitelist ? data.whitelist.split(',').map(s => s.trim()).filter(Boolean) : [],
+        ioc_types: data.iocTypes,
+        days_to_live: data.daysToLive,
       };
+      
+      if (data.confidenceOverride !== null && data.confidenceOverride !== undefined && !isNaN(data.confidenceOverride)) {
+        configPayload.confidence_override = data.confidenceOverride;
+      }
       
       const payload = {
         name: data.name,
@@ -121,9 +124,9 @@ export default function AggregatorsPage() {
     setEditingId(aggregator.id || null);
     setValue('name', aggregator.name);
     setValue('inputMiners', aggregator.config?.inputMiners || []);
-    setValue('agingRules', aggregator.config?.agingRules || 30);
-    setValue('confidenceOverride', aggregator.config?.confidenceOverride || 50);
-    setValue('whitelist', (aggregator.config?.whitelist || []).join(', '));
+    setValue('iocTypes', aggregator.config?.ioc_types || []);
+    setValue('daysToLive', aggregator.config?.days_to_live || 30);
+    setValue('confidenceOverride', aggregator.config?.confidence_override ?? null);
     setValue('status', aggregator.is_active ? 'enabled' : 'disabled');
     setIsFormOpen(true);
   };
@@ -169,6 +172,19 @@ export default function AggregatorsPage() {
     reset();
   };
 
+  const getBadgeColor = (type: string) => {
+    switch (type?.toLowerCase()) {
+      case 'domain': return 'bg-green-500/10 text-green-400 border-green-500/20';
+      case 'ip': return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
+      case 'ipv6': return 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20';
+      case 'hash': return 'bg-orange-500/10 text-orange-400 border-orange-500/20';
+      case 'url': return 'bg-purple-500/10 text-purple-400 border-purple-500/20';
+      case 'email': return 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20';
+      case 'unknown': return 'bg-red-500/10 text-red-400 border-red-500/20';
+      default: return 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20';
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto">
       <div className="flex justify-between items-center mb-8">
@@ -208,15 +224,15 @@ export default function AggregatorsPage() {
               </div>
               
               <div>
-                <label className="block text-sm font-medium text-zinc-400 mb-1">Input Miners</label>
+                <label className="block text-sm font-medium text-zinc-400 mb-1">Input Miners & Whitelists</label>
                 <select
                   multiple
                   {...register('inputMiners')}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50 min-h-[80px]"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 min-h-[80px]"
                 >
                   {availableMiners.map((miner) => (
                     <option key={miner.id} value={miner.id}>
-                      {miner.name}
+                      {miner.name} {miner.node_type === 'whitelist' ? '(Whitelist)' : ''}
                     </option>
                   ))}
                 </select>
@@ -225,33 +241,50 @@ export default function AggregatorsPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-zinc-400 mb-1">Aging Rules (TTL in days)</label>
-                <input
-                  type="number"
-                  {...register('agingRules', { valueAsNumber: true })}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                />
-                {errors.agingRules && <p className="text-red-400 text-xs mt-1">{errors.agingRules.message}</p>}
+                <label className="block text-sm font-medium text-zinc-400 mb-1">IOC Types to Process</label>
+                <div className="grid grid-cols-3 gap-2 mt-2">
+                  {['ip', 'ipv6', 'domain', 'url', 'hash', 'email'].map((type) => (
+                    <label key={type} className="flex items-center space-x-2 text-sm text-zinc-300">
+                      <input
+                        type="checkbox"
+                        value={type}
+                        {...register('iocTypes')}
+                        className="rounded border-zinc-800 bg-zinc-950 text-emerald-500 focus:ring-emerald-500/50"
+                      />
+                      <span className="uppercase font-mono text-xs">{type}</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-zinc-500 mt-2">
+                  Only IOCs matching the selected types will be processed. Leave all unselected to process every type.
+                </p>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-zinc-400 mb-1">Confidence Override (0-100)</label>
+                <label className="block text-sm font-medium text-zinc-400 mb-1">Aging — Days to Live</label>
                 <input
                   type="number"
-                  {...register('confidenceOverride', { valueAsNumber: true })}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                  {...register('daysToLive', { valueAsNumber: true })}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
                 />
-                {errors.confidenceOverride && <p className="text-red-400 text-xs mt-1">{errors.confidenceOverride.message}</p>}
+                {errors.daysToLive && <p className="text-red-400 text-xs mt-1">{errors.daysToLive.message}</p>}
+                <p className="text-xs text-zinc-500 mt-1">
+                  IOC expiry will be set to today + N days on every aggregation run. Expired IOCs are automatically deleted every hour.
+                </p>
               </div>
 
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-zinc-400 mb-1">Whitelist (comma separated)</label>
+              <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-1">Confidence Override</label>
                 <input
-                  {...register('whitelist')}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                  placeholder="e.g., microsoft.com, google.com"
+                  type="number"
+                  {...register('confidenceOverride', { valueAsNumber: true, setValueAs: v => v === "" || isNaN(v) ? null : parseInt(v, 10) })}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                  placeholder="Leave empty to keep original"
                 />
-                {errors.whitelist && <p className="text-red-400 text-xs mt-1">{errors.whitelist.message}</p>}
+                {errors.confidenceOverride && <p className="text-red-400 text-xs mt-1">{errors.confidenceOverride.message}</p>}
+                <p className="text-xs text-zinc-500 mt-1">
+                  If set, overrides the confidence score of all processed IOCs.
+                </p>
               </div>
 
               <div>
@@ -333,17 +366,21 @@ export default function AggregatorsPage() {
                         <span className="text-zinc-500 text-xs italic">No miners connected</span>
                       )}
                     </td>
-                    <td className="px-6 py-4 font-mono text-xs text-zinc-400">{agg.config?.agingRules || 0}d</td>
+                    <td className="px-6 py-4 font-mono text-xs text-zinc-400">{agg.config?.days_to_live || 0}d</td>
                   <td className="px-6 py-4">
-                    <div className="flex items-center">
-                      <div className="w-16 h-1.5 bg-zinc-800 rounded-full mr-2 overflow-hidden">
-                        <div 
-                          className="h-full bg-emerald-500" 
-                          style={{ width: `${agg.config?.confidenceOverride || 0}%` }}
-                        />
+                    {agg.config?.confidence_override !== undefined && agg.config?.confidence_override !== null ? (
+                      <div className="flex items-center">
+                        <div className="w-16 h-1.5 bg-zinc-800 rounded-full mr-2 overflow-hidden">
+                          <div 
+                            className="h-full bg-emerald-500" 
+                            style={{ width: `${agg.config.confidence_override}%` }}
+                          />
+                        </div>
+                        <span className="text-xs font-mono text-zinc-400">{agg.config.confidence_override}</span>
                       </div>
-                      <span className="text-xs font-mono text-zinc-400">{agg.config?.confidenceOverride || 0}</span>
-                    </div>
+                    ) : (
+                      <span className="text-zinc-500 text-xs">—</span>
+                    )}
                   </td>
                   <td className="px-6 py-4">
                     <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
@@ -417,6 +454,72 @@ export default function AggregatorsPage() {
                 </div>
               ) : (
                 <>
+                  {/* Configuration Details */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                    {/* IOC Types */}
+                    <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4">
+                      <h4 className="text-sm font-medium text-zinc-400 mb-2">IOC Types</h4>
+                      <div className="flex flex-wrap gap-1">
+                        {selectedAggregator.config?.ioc_types?.length > 0 ? (
+                          selectedAggregator.config.ioc_types.map((type: string) => (
+                            <span key={type} className={`px-2 py-0.5 border rounded text-xs font-mono uppercase ${getBadgeColor(type)}`}>
+                              {type}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="px-2 py-0.5 bg-zinc-800 text-zinc-400 border border-zinc-700 rounded text-xs font-mono uppercase">
+                            All Types
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* TTL */}
+                    <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4">
+                      <h4 className="text-sm font-medium text-zinc-400 mb-2">TTL</h4>
+                      <div className="text-lg font-mono text-zinc-200">
+                        {selectedAggregator.config?.days_to_live || 0} <span className="text-sm text-zinc-500">days</span>
+                      </div>
+                    </div>
+
+                    {/* Confidence Override */}
+                    <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4">
+                      <h4 className="text-sm font-medium text-zinc-400 mb-2">Confidence Override</h4>
+                      <div className="text-lg font-mono text-zinc-200">
+                        {selectedAggregator.config?.confidence_override !== undefined && selectedAggregator.config?.confidence_override !== null ? (
+                          selectedAggregator.config.confidence_override
+                        ) : (
+                          <span className="text-zinc-500">—</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Whitelist Miners */}
+                    <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4">
+                      <h4 className="text-sm font-medium text-zinc-400 mb-2">Whitelist Miners</h4>
+                      <div className="flex flex-col gap-2">
+                        {(() => {
+                          const connectedEdges = edges.filter(e => e.target_id === selectedAggregator.id);
+                          const whitelistMiners = connectedEdges
+                            .map(e => availableMiners.find(m => m.id === e.source_id))
+                            .filter(m => m?.node_type === 'whitelist');
+                          
+                          if (whitelistMiners.length > 0) {
+                            return whitelistMiners.map(m => (
+                              <div key={m?.id} className="flex items-center gap-2">
+                                <span className="text-sm text-zinc-300 truncate">{m?.name}</span>
+                                <span className="px-1.5 py-0.5 bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 rounded text-[10px] font-bold tracking-wider">
+                                  WHITELIST
+                                </span>
+                              </div>
+                            ));
+                          }
+                          return <span className="text-sm text-zinc-500 italic">No whitelist configured</span>;
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Logs Section */}
                   <div>
                     <h3 className="text-lg font-medium text-white mb-4">Recent Logs</h3>
@@ -434,20 +537,74 @@ export default function AggregatorsPage() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-zinc-800">
-                            {aggregatorLogs.map((log, idx) => (
-                              <tr key={idx} className="hover:bg-zinc-900/50">
-                                <td className="px-4 py-2 font-mono text-xs text-zinc-400">
-                                  {new Date(log.timestamp).toLocaleString()}
-                                </td>
-                                <td className="px-4 py-2">
-                                  <span className={`font-medium ${log.status === 'success' ? 'text-emerald-400' : 'text-red-400'}`}>
-                                    {log.status}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-2 text-zinc-300">{log.message}</td>
-                                <td className="px-4 py-2 font-mono text-zinc-400">{log.iocs_processed}</td>
-                              </tr>
-                            ))}
+                            {aggregatorLogs.map((log, idx) => {
+                              const renderLogMessage = (log: any) => {
+                                if (log.status === 'error') {
+                                  return <span className="text-red-400">{log.message}</span>;
+                                }
+                                
+                                const typesMatch = log.message.match(/Types filter:\s*\[(.*?)\]/);
+                                const processedMatch = log.message.match(/Processed:\s*(\d+)/);
+                                const droppedMatch = log.message.match(/Dropped \(Whitelist\):\s*(\d+)/);
+                                const ttlMatch = log.message.match(/TTL applied:\s*(\d+)\s*days/i);
+                                
+                                if (!typesMatch && !processedMatch && !droppedMatch && !ttlMatch) {
+                                  return <span className="text-zinc-300">{log.message}</span>;
+                                }
+
+                                const typesStr = typesMatch ? typesMatch[1] : '';
+                                const typeEntries = typesStr.split(',').map((s: string) => s.trim()).filter(Boolean);
+                                
+                                return (
+                                  <div className="flex flex-col gap-1">
+                                    <span className="text-zinc-300">{log.message.split('.')[0]}.</span>
+                                    <div className="flex flex-wrap gap-2 mt-1">
+                                      {typesMatch && (
+                                        typeEntries.length > 0 ? typeEntries.map((type: string, i: number) => (
+                                          <span key={i} className={`px-2 py-0.5 text-xs font-medium border rounded-full ${getBadgeColor(type)}`}>
+                                            {type}
+                                          </span>
+                                        )) : (
+                                          <span className="px-2 py-0.5 text-xs font-medium border rounded-full bg-zinc-800 text-zinc-400 border-zinc-700">
+                                            All Types
+                                          </span>
+                                        )
+                                      )}
+                                      {processedMatch && (
+                                        <span className="px-2 py-0.5 text-xs font-medium border rounded-full bg-blue-500/10 text-blue-400 border-blue-500/20">
+                                          Processed: {processedMatch[1]}
+                                        </span>
+                                      )}
+                                      {droppedMatch && parseInt(droppedMatch[1], 10) > 0 && (
+                                        <span className="px-2 py-0.5 text-xs font-medium border rounded-full bg-yellow-500/10 text-yellow-400 border-yellow-500/20">
+                                          Dropped (Whitelist): {droppedMatch[1]}
+                                        </span>
+                                      )}
+                                      {ttlMatch && (
+                                        <span className="px-2 py-0.5 text-xs font-medium border rounded-full bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                                          TTL: {ttlMatch[1]}d
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              };
+
+                              return (
+                                <tr key={idx} className="hover:bg-zinc-900/50">
+                                  <td className="px-4 py-2 font-mono text-xs text-zinc-400 align-top">
+                                    {new Date(log.timestamp).toLocaleString()}
+                                  </td>
+                                  <td className="px-4 py-2 align-top">
+                                    <span className={`font-medium ${log.status === 'success' ? 'text-emerald-400' : 'text-red-400'}`}>
+                                      {log.status}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-2 align-top">{renderLogMessage(log)}</td>
+                                  <td className="px-4 py-2 font-mono text-zinc-400 align-top">{log.iocs_processed}</td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
@@ -474,7 +631,7 @@ export default function AggregatorsPage() {
                               <tr key={idx} className="hover:bg-zinc-900/50">
                                 <td className="px-4 py-2 font-mono text-zinc-200">{ioc.value}</td>
                                 <td className="px-4 py-2">
-                                  <span className="px-2 py-1 bg-zinc-800 text-zinc-300 rounded text-xs font-mono uppercase">
+                                  <span className={`px-2 py-1 border rounded text-xs font-mono uppercase ${getBadgeColor(ioc.type)}`}>
                                     {ioc.type}
                                   </span>
                                 </td>

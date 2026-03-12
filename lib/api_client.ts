@@ -3,7 +3,7 @@ const BASE_URL = 'http://localhost:8000/api/v1';
 export interface ThreatNode {
   id?: string;
   name: string;
-  node_type: 'miner' | 'aggregator' | 'output';
+  node_type: 'miner' | 'whitelist' | 'aggregator' | 'output';
   is_active: boolean;
   config: any;
 }
