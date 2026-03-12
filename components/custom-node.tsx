@@ -5,12 +5,14 @@ import { Database, GitMerge, Send } from 'lucide-react';
 
 const iconMap = {
   miner: Database,
+  whitelist: Database,
   aggregator: GitMerge,
   output: Send,
 };
 
 const colorMap = {
   miner: 'text-blue-400 border-blue-500/30 bg-blue-500/10',
+  whitelist: 'text-yellow-500 border-yellow-500/30 bg-yellow-500/10',
   aggregator: 'text-purple-400 border-purple-500/30 bg-purple-500/10',
   output: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10',
 };
@@ -21,7 +23,7 @@ export function CustomNode({ data }: any) {
 
   return (
     <div className={`px-4 py-3 rounded-lg border ${colors} backdrop-blur-sm min-w-[200px] shadow-lg`}>
-      {data.type !== 'miner' && (
+      {data.type !== 'miner' && data.type !== 'whitelist' && (
         <Handle type="target" position={Position.Left} className="w-2 h-2 !bg-zinc-500 border-none" />
       )}
       

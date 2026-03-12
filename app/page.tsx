@@ -42,14 +42,14 @@ export default function TopologyView() {
       ]);
       
       // Layout logic (simple horizontal layout)
-      const miners = data.filter((n) => n.node_type === 'miner');
+      const miners = data.filter((n) => n.node_type === 'miner' || n.node_type === 'whitelist');
       const aggregators = data.filter((n) => n.node_type === 'aggregator');
       const outputs = data.filter((n) => n.node_type === 'output');
 
       const newNodes: Node[] = [];
       const newEdges: Edge[] = [];
 
-      // Miners (Column 0)
+      // Miners & Whitelists (Column 0)
       miners.forEach((node, i) => {
         newNodes.push({
           id: String(node.id),
@@ -59,7 +59,7 @@ export default function TopologyView() {
             label: node.name,
             type: node.node_type,
             status: node.is_active ? 'enabled' : 'disabled',
-            details: node.config?.parser || 'N/A',
+            details: node.node_type === 'whitelist' ? (node.config?.ioc_type || 'N/A') : (node.config?.parser || 'N/A'),
           },
         });
       });
@@ -129,13 +129,13 @@ export default function TopologyView() {
       const sourceType = sourceNode.data.type;
       const targetType = targetNode.data.type;
 
-      // Validation: Miner -> Aggregator -> Output
+      // Validation: Miner/Whitelist -> Aggregator -> Output
       let isValid = false;
-      if (sourceType === 'miner' && targetType === 'aggregator') isValid = true;
+      if ((sourceType === 'miner' || sourceType === 'whitelist') && targetType === 'aggregator') isValid = true;
       if (sourceType === 'aggregator' && targetType === 'output') isValid = true;
 
       if (!isValid) {
-        alert(`Collegamento non valido: non puoi collegare un ${sourceType} a un ${targetType}. Il flusso consentito è Miner -> Aggregator -> Output.`);
+        alert(`Collegamento non valido: non puoi collegare un ${sourceType} a un ${targetType}. I flussi consentiti sono Miner/Whitelist -> Aggregator e Aggregator -> Output.`);
         return;
       }
 
@@ -215,6 +215,7 @@ export default function TopologyView() {
           <MiniMap 
             nodeColor={(n) => {
               if (n.data?.type === 'miner') return '#3b82f6';
+              if (n.data?.type === 'whitelist') return '#eab308';
               if (n.data?.type === 'aggregator') return '#a855f7';
               if (n.data?.type === 'output') return '#10b981';
               return '#52525b';
