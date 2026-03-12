@@ -112,11 +112,25 @@ export default function TopologyView() {
       });
 
       // Build edges from DB
+      const whitelistToAggregatorCount: Record<string, number> = {};
+
       dbEdges.forEach((edge) => {
+        const sourceNode = data.find(n => String(n.id) === String(edge.source_id));
+        const targetNode = data.find(n => String(n.id) === String(edge.target_id));
+        
+        let targetHandle = 'target-left';
+        if (sourceNode?.node_type === 'whitelist' && targetNode?.node_type === 'aggregator') {
+          const aggId = String(targetNode.id);
+          whitelistToAggregatorCount[aggId] = (whitelistToAggregatorCount[aggId] || 0) + 1;
+          targetHandle = whitelistToAggregatorCount[aggId] % 2 === 1 ? 'target-top' : 'target-bottom';
+        }
+
         newEdges.push({
           id: String(edge.id), // Use the DB edge ID
           source: String(edge.source_id),
           target: String(edge.target_id),
+          sourceHandle: 'source-right',
+          targetHandle: targetHandle,
           type: 'custom',
           animated: true,
           style: { stroke: '#52525b', strokeWidth: 2 },
@@ -150,11 +164,23 @@ export default function TopologyView() {
 
       // Validation: Miner/Whitelist -> Aggregator -> Output
       let isValid = false;
-      if ((sourceType === 'miner' || sourceType === 'whitelist') && targetType === 'aggregator') isValid = true;
-      if (sourceType === 'aggregator' && targetType === 'output') isValid = true;
+      let errorMessage = '';
+
+      if (sourceType === 'miner' && targetType === 'aggregator') {
+        if (params.targetHandle === 'target-left' || !params.targetHandle) isValid = true;
+        else errorMessage = 'I miner normali devono collegarsi al lato sinistro degli aggregatori.';
+      } else if (sourceType === 'whitelist' && targetType === 'aggregator') {
+        if (params.targetHandle === 'target-top' || params.targetHandle === 'target-bottom') isValid = true;
+        else errorMessage = 'I nodi whitelist devono collegarsi alla parte alta o bassa degli aggregatori.';
+      } else if (sourceType === 'aggregator' && targetType === 'output') {
+        if (params.targetHandle === 'target-left' || !params.targetHandle) isValid = true;
+        else errorMessage = 'Gli aggregatori devono collegarsi al lato sinistro degli output.';
+      } else {
+        errorMessage = `Collegamento non valido: non puoi collegare un ${sourceType} a un ${targetType}. I flussi consentiti sono Miner/Whitelist -> Aggregator e Aggregator -> Output.`;
+      }
 
       if (!isValid) {
-        alert(`Collegamento non valido: non puoi collegare un ${sourceType} a un ${targetType}. I flussi consentiti sono Miner/Whitelist -> Aggregator e Aggregator -> Output.`);
+        alert(errorMessage);
         return;
       }
 
@@ -170,7 +196,7 @@ export default function TopologyView() {
             id: String(newEdge.id),
             source: params.source,
             target: params.target,
-            sourceHandle: params.sourceHandle,
+            sourceHandle: params.sourceHandle || 'source-right',
             targetHandle: params.targetHandle,
             type: 'custom',
             animated: true,

@@ -23,8 +23,15 @@ export function CustomNode({ data }: any) {
 
   return (
     <div className={`px-4 py-3 rounded-lg border ${colors} backdrop-blur-sm min-w-[200px] shadow-lg`}>
-      {data.type !== 'miner' && data.type !== 'whitelist' && (
-        <Handle type="target" position={Position.Left} className="w-2 h-2 !bg-zinc-500 border-none" />
+      {data.type === 'output' && (
+        <Handle type="target" position={Position.Left} id="target-left" className="w-2 h-2 !bg-zinc-500 border-none" />
+      )}
+      {data.type === 'aggregator' && (
+        <>
+          <Handle type="target" position={Position.Left} id="target-left" className="w-2 h-2 !bg-zinc-500 border-none" />
+          <Handle type="target" position={Position.Top} id="target-top" className="w-2 h-2 !bg-zinc-500 border-none" />
+          <Handle type="target" position={Position.Bottom} id="target-bottom" className="w-2 h-2 !bg-zinc-500 border-none" />
+        </>
       )}
       
       <div className="flex items-center space-x-3">
@@ -56,7 +63,7 @@ export function CustomNode({ data }: any) {
       </div>
 
       {data.type !== 'output' && (
-        <Handle type="source" position={Position.Right} className="w-2 h-2 !bg-zinc-500 border-none" />
+        <Handle type="source" position={Position.Right} id="source-right" className="w-2 h-2 !bg-zinc-500 border-none" />
       )}
     </div>
   );
