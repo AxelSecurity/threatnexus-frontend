@@ -10,7 +10,9 @@ import { apiClient, ThreatNode } from '@/lib/api_client';
 const minerSchema = z.object({
   name: z.string().min(3, 'Name must be at least 3 characters'),
   sourceUrl: z.string().url('Must be a valid URL'),
-  parserType: z.enum(['csv', 'txt']),
+  parserType: z.enum(['csv', 'txt', 'json', 'stix2']),
+  jsonPath: z.string().optional(),
+  jsonField: z.string().optional(),
   pollingInterval: z.string().min(1, 'Cron expression is required'),
   status: z.enum(['enabled', 'disabled']),
   authType: z.enum(['none', 'basic', 'bearer']),
@@ -77,6 +79,7 @@ export default function MinersPage() {
   });
 
   const authType = watch('authType');
+  const parserType = watch('parserType');
 
   const loadMiners = async () => {
     setLoading(true);
@@ -112,6 +115,10 @@ export default function MinersPage() {
         parser: data.parserType,
         polling_interval: cronToMinutes(data.pollingInterval),
         auth_type: data.authType,
+        ...(data.parserType === 'json' && {
+          json_path: data.jsonPath,
+          json_field: data.jsonField,
+        }),
         ...(data.authType === 'basic' && {
           auth_username: data.authUsername,
           auth_password: data.authPassword,
@@ -148,7 +155,9 @@ export default function MinersPage() {
     
     if (miner.config) {
       setValue('sourceUrl', miner.config.url || '');
-      setValue('parserType', (miner.config.parser === 'csv' || miner.config.parser === 'txt') ? miner.config.parser : 'txt');
+      setValue('parserType', miner.config.parser || 'txt');
+      setValue('jsonPath', miner.config.json_path || '');
+      setValue('jsonField', miner.config.json_field || '');
       setValue('pollingInterval', miner.config.polling_interval ? `*/${miner.config.polling_interval} * * * *` : '0 */2 * * *');
       setValue('authType', miner.config.auth_type || 'none');
       setValue('authUsername', miner.config.auth_username || '');
@@ -157,6 +166,8 @@ export default function MinersPage() {
     } else {
       setValue('sourceUrl', '');
       setValue('parserType', 'txt');
+      setValue('jsonPath', '');
+      setValue('jsonField', '');
       setValue('pollingInterval', '0 */2 * * *');
       setValue('authType', 'none');
       setValue('authUsername', '');
@@ -346,8 +357,37 @@ export default function MinersPage() {
                 >
                   <option value="csv">CSV</option>
                   <option value="txt">TXT (Plain Text List)</option>
+                  <option value="json">JSON (API Response)</option>
+                  <option value="stix2">STIX 2.x Bundle</option>
                 </select>
               </div>
+
+              {parserType === 'json' && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-zinc-400 mb-1">JSON Path</label>
+                    <input
+                      {...register('jsonPath')}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                      placeholder="e.g., data or results.indicators"
+                    />
+                    <p className="text-xs text-zinc-500 mt-1">
+                      Dot-notation path to the array of indicators. Leave empty if the root is already an array.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-zinc-400 mb-1">JSON Field</label>
+                    <input
+                      {...register('jsonField')}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                      placeholder="e.g., value or indicator"
+                    />
+                    <p className="text-xs text-zinc-500 mt-1">
+                      Key containing the IOC value in each object. Leave empty if each element is a plain string.
+                    </p>
+                  </div>
+                </>
+              )}
 
               <div>
                 <label className="block text-sm font-medium text-zinc-400 mb-1">Polling Interval (Cron)</label>
