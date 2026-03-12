@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Plus, Edit2, Trash2, GitMerge, AlertCircle, Play, Eye, X } from 'lucide-react';
-import { apiClient, ThreatNode } from '@/lib/api_client';
+import { Plus, Edit2, Trash2, GitMerge, AlertCircle, Eye, X } from 'lucide-react';
+import { apiClient, ThreatNode, ThreatEdge } from '@/lib/api_client';
 
 const aggregatorSchema = z.object({
   name: z.string().min(3, 'Name must be at least 3 characters'),
@@ -21,6 +21,7 @@ type AggregatorFormValues = z.infer<typeof aggregatorSchema>;
 export default function AggregatorsPage() {
   const [aggregators, setAggregators] = useState<ThreatNode[]>([]);
   const [availableMiners, setAvailableMiners] = useState<ThreatNode[]>([]);
+  const [edges, setEdges] = useState<ThreatEdge[]>([]);
   const [loading, setLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -53,9 +54,13 @@ export default function AggregatorsPage() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const nodes = await apiClient.getNodes();
+      const [nodes, allEdges] = await Promise.all([
+        apiClient.getNodes(),
+        apiClient.getEdges()
+      ]);
       setAggregators(nodes.filter((n) => n.node_type === 'aggregator'));
       setAvailableMiners(nodes.filter((n) => n.node_type === 'miner'));
+      setEdges(allEdges);
     } finally {
       setLoading(false);
     }
@@ -66,10 +71,14 @@ export default function AggregatorsPage() {
     const fetchData = async () => {
       setLoading(true);
       try {
-        const nodes = await apiClient.getNodes();
+        const [nodes, allEdges] = await Promise.all([
+          apiClient.getNodes(),
+          apiClient.getEdges()
+        ]);
         if (mounted) {
           setAggregators(nodes.filter((n) => n.node_type === 'aggregator'));
           setAvailableMiners(nodes.filter((n) => n.node_type === 'miner'));
+          setEdges(allEdges);
         }
       } finally {
         if (mounted) setLoading(false);
@@ -123,16 +132,6 @@ export default function AggregatorsPage() {
     if (confirm('Are you sure you want to delete this aggregator?')) {
       await apiClient.deleteNode(id);
       await loadData();
-    }
-  };
-
-  const handleRunNow = async (id: string) => {
-    try {
-      await apiClient.triggerNode(id);
-      alert('Aggregator avviato in background');
-    } catch (error: any) {
-      console.error('Failed to trigger aggregator', error);
-      alert(`Errore: ${error.message}`);
     }
   };
 
@@ -303,7 +302,7 @@ export default function AggregatorsPage() {
             <thead className="bg-zinc-950/50 text-zinc-400 border-b border-zinc-800">
               <tr>
                 <th className="px-6 py-3 font-medium">Name</th>
-                <th className="px-6 py-3 font-medium">Inputs</th>
+                <th className="px-6 py-3 font-medium">Connected Miners</th>
                 <th className="px-6 py-3 font-medium">TTL</th>
                 <th className="px-6 py-3 font-medium">Confidence</th>
                 <th className="px-6 py-3 font-medium">Status</th>
@@ -311,15 +310,30 @@ export default function AggregatorsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800">
-              {aggregators.map((agg) => (
-                <tr key={agg.id} className="hover:bg-zinc-800/50 transition-colors">
-                  <td className="px-6 py-4 font-medium text-zinc-200">{agg.name}</td>
-                  <td className="px-6 py-4">
-                    <span className="px-2 py-1 bg-zinc-800 text-zinc-300 rounded text-xs font-mono">
-                      {(agg.config?.inputMiners || []).length} Miners
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 font-mono text-xs text-zinc-400">{agg.config?.agingRules || 0}d</td>
+              {aggregators.map((agg) => {
+                const connectedEdges = edges.filter(e => e.target_id === agg.id);
+                const connectedMiners = connectedEdges.map(e => {
+                  const miner = availableMiners.find(m => m.id === e.source_id);
+                  return miner ? miner.name : 'Unknown';
+                });
+
+                return (
+                  <tr key={agg.id} className="hover:bg-zinc-800/50 transition-colors">
+                    <td className="px-6 py-4 font-medium text-zinc-200">{agg.name}</td>
+                    <td className="px-6 py-4">
+                      {connectedMiners.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {connectedMiners.map((name, idx) => (
+                            <span key={idx} className="px-2 py-1 bg-zinc-800 text-zinc-300 rounded text-xs font-mono">
+                              {name}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-zinc-500 text-xs italic">No miners connected</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 font-mono text-xs text-zinc-400">{agg.config?.agingRules || 0}d</td>
                   <td className="px-6 py-4">
                     <div className="flex items-center">
                       <div className="w-16 h-1.5 bg-zinc-800 rounded-full mr-2 overflow-hidden">
@@ -343,13 +357,6 @@ export default function AggregatorsPage() {
                   </td>
                   <td className="px-6 py-4 text-right">
                     <button
-                      onClick={() => agg.id && handleRunNow(agg.id)}
-                      className="p-2 text-zinc-400 hover:text-emerald-400 transition-colors"
-                      title="Run Now"
-                    >
-                      <Play className="w-4 h-4" />
-                    </button>
-                    <button
                       onClick={() => handleOpenInfo(agg)}
                       className="p-2 text-zinc-400 hover:text-blue-400 transition-colors ml-1"
                       title="Info"
@@ -372,7 +379,8 @@ export default function AggregatorsPage() {
                     </button>
                   </td>
                 </tr>
-              ))}
+              );
+            })}
             </tbody>
           </table>
         </div>

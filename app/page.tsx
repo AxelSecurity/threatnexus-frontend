@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   ReactFlow,
   MiniMap,
@@ -11,10 +11,13 @@ import {
   addEdge,
   Connection,
   Edge,
+  Node,
   BackgroundVariant,
+  applyEdgeChanges,
+  EdgeChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { apiClient, ThreatNode } from '@/lib/api_client';
+import { apiClient, ThreatNode, ThreatEdge } from '@/lib/api_client';
 import { CustomNode } from '@/components/custom-node';
 
 const nodeTypes = {
@@ -22,108 +25,161 @@ const nodeTypes = {
 };
 
 export default function TopologyView() {
-  const [nodes, setNodes, onNodesChange] = useNodesState<any>([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(true);
+  const nodesRef = useRef<Node[]>([]);
 
   useEffect(() => {
-    const loadGraph = async () => {
-      try {
-        const data = await apiClient.getNodes();
-        
-        // Layout logic (simple horizontal layout)
-        const miners = data.filter((n) => n.node_type === 'miner');
-        const aggregators = data.filter((n) => n.node_type === 'aggregator');
-        const outputs = data.filter((n) => n.node_type === 'output');
+    nodesRef.current = nodes;
+  }, [nodes]);
 
-        const newNodes: any[] = [];
-        const newEdges: Edge[] = [];
+  const loadGraph = useCallback(async () => {
+    try {
+      const [data, dbEdges] = await Promise.all([
+        apiClient.getNodes(),
+        apiClient.getEdges()
+      ]);
+      
+      // Layout logic (simple horizontal layout)
+      const miners = data.filter((n) => n.node_type === 'miner');
+      const aggregators = data.filter((n) => n.node_type === 'aggregator');
+      const outputs = data.filter((n) => n.node_type === 'output');
 
-        // Miners (Column 0)
-        miners.forEach((node, i) => {
-          newNodes.push({
-            id: String(node.id),
-            type: 'custom',
-            position: { x: 100, y: 100 + i * 150 },
-            data: {
-              label: node.name,
-              type: node.node_type,
-              status: node.is_active ? 'enabled' : 'disabled',
-              details: node.config?.parser || 'N/A',
-            },
-          });
+      const newNodes: Node[] = [];
+      const newEdges: Edge[] = [];
+
+      // Miners (Column 0)
+      miners.forEach((node, i) => {
+        newNodes.push({
+          id: String(node.id),
+          type: 'custom',
+          position: { x: 100, y: 100 + i * 150 },
+          data: {
+            label: node.name,
+            type: node.node_type,
+            status: node.is_active ? 'enabled' : 'disabled',
+            details: node.config?.parser || 'N/A',
+          },
         });
+      });
 
-        // Aggregators (Column 1)
-        aggregators.forEach((node, i) => {
-          newNodes.push({
-            id: String(node.id),
-            type: 'custom',
-            position: { x: 500, y: 100 + i * 200 },
-            data: {
-              label: node.name,
-              type: node.node_type,
-              status: node.is_active ? 'enabled' : 'disabled',
-              details: `TTL: ${node.config?.agingRules || 0}d`,
-            },
-          });
-
-          // Edges from Miners to Aggregators
-          if (node.config?.inputMiners) {
-            node.config.inputMiners.forEach((minerId: string) => {
-              newEdges.push({
-                id: `e-${minerId}-${node.id}`,
-                source: String(minerId),
-                target: String(node.id),
-                animated: true,
-                style: { stroke: '#52525b', strokeWidth: 2 },
-              });
-            });
-          }
+      // Aggregators (Column 1)
+      aggregators.forEach((node, i) => {
+        newNodes.push({
+          id: String(node.id),
+          type: 'custom',
+          position: { x: 500, y: 100 + i * 200 },
+          data: {
+            label: node.name,
+            type: node.node_type,
+            status: node.is_active ? 'enabled' : 'disabled',
+            details: `TTL: ${node.config?.agingRules || 0}d`,
+          },
         });
+      });
 
-        // Outputs (Column 2)
-        outputs.forEach((node, i) => {
-          newNodes.push({
-            id: String(node.id),
-            type: 'custom',
-            position: { x: 900, y: 100 + i * 150 },
-            data: {
-              label: node.name,
-              type: node.node_type,
-              status: node.is_active ? 'enabled' : 'disabled',
-              details: node.config?.outputFormat || 'N/A',
-            },
-          });
-
-          // Edges from Aggregators to Outputs
-          if (node.config?.sourceAggregator) {
-            newEdges.push({
-              id: `e-${node.config.sourceAggregator}-${node.id}`,
-              source: String(node.config.sourceAggregator),
-              target: String(node.id),
-              animated: true,
-              style: { stroke: '#10b981', strokeWidth: 2 },
-            });
-          }
+      // Outputs (Column 2)
+      outputs.forEach((node, i) => {
+        newNodes.push({
+          id: String(node.id),
+          type: 'custom',
+          position: { x: 900, y: 100 + i * 150 },
+          data: {
+            label: node.name,
+            type: node.node_type,
+            status: node.is_active ? 'enabled' : 'disabled',
+            details: node.config?.outputFormat || 'N/A',
+          },
         });
+      });
 
-        setNodes(newNodes);
-        setEdges(newEdges);
-      } catch (error: any) {
-        console.error('Failed to load graph data', error);
-        alert(`Errore nel caricamento della topologia: ${error.message}`);
-      } finally {
-        setLoading(false);
-      }
-    };
+      // Build edges from DB
+      dbEdges.forEach((edge) => {
+        newEdges.push({
+          id: String(edge.id), // Use the DB edge ID
+          source: String(edge.source_id),
+          target: String(edge.target_id),
+          animated: true,
+          style: { stroke: '#52525b', strokeWidth: 2 },
+        });
+      });
 
-    loadGraph();
+      setNodes(newNodes);
+      setEdges(newEdges);
+    } catch (error: any) {
+      console.error('Failed to load graph data', error);
+      alert(`Errore nel caricamento della topologia: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
   }, [setNodes, setEdges]);
 
+  useEffect(() => {
+    loadGraph();
+  }, [loadGraph]);
+
   const onConnect = useCallback(
-    (params: Connection | Edge) => setEdges((eds) => addEdge(params, eds).map(e => ({ ...e, animated: true, style: { stroke: '#52525b', strokeWidth: 2 } }))),
-    [setEdges],
+    async (params: Connection) => {
+      const sourceNode = nodesRef.current.find(n => n.id === params.source);
+      const targetNode = nodesRef.current.find(n => n.id === params.target);
+
+      if (!sourceNode || !targetNode) return;
+
+      const sourceType = sourceNode.data.type;
+      const targetType = targetNode.data.type;
+
+      // Validation: Miner -> Aggregator -> Output
+      let isValid = false;
+      if (sourceType === 'miner' && targetType === 'aggregator') isValid = true;
+      if (sourceType === 'aggregator' && targetType === 'output') isValid = true;
+
+      if (!isValid) {
+        alert(`Collegamento non valido: non puoi collegare un ${sourceType} a un ${targetType}. Il flusso consentito è Miner -> Aggregator -> Output.`);
+        return;
+      }
+
+      try {
+        const newEdge = await apiClient.createEdge({
+          source_id: params.source,
+          target_id: params.target
+        });
+
+        setEdges((eds) => [
+          ...eds,
+          {
+            id: String(newEdge.id),
+            source: params.source,
+            target: params.target,
+            sourceHandle: params.sourceHandle,
+            targetHandle: params.targetHandle,
+            animated: true,
+            style: { stroke: '#52525b', strokeWidth: 2 }
+          }
+        ]);
+      } catch (error: any) {
+        console.error('Failed to create edge', error);
+        alert(`Errore nella creazione del collegamento: ${error.message}`);
+      }
+    },
+    [setEdges]
+  );
+
+  const onEdgesDelete = useCallback(
+    async (deletedEdges: Edge[]) => {
+      for (const edge of deletedEdges) {
+        try {
+          // Assuming edge.id is the DB ID
+          if (edge.id && !edge.id.startsWith('reactflow')) {
+            await apiClient.deleteEdge(edge.id);
+          }
+        } catch (error: any) {
+          console.error(`Failed to delete edge ${edge.id}`, error);
+          alert(`Errore nell'eliminazione del collegamento: ${error.message}`);
+        }
+      }
+    },
+    []
   );
 
   if (loading) {
@@ -150,6 +206,7 @@ export default function TopologyView() {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onEdgesDelete={onEdgesDelete}
           nodeTypes={nodeTypes}
           fitView
           className="dark"
