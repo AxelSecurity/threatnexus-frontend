@@ -4,13 +4,14 @@ import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Plus, Edit2, Trash2, Database, AlertCircle, Play, Eye, X } from 'lucide-react';
+import { Plus, Edit2, Trash2, Database, AlertCircle, Play, Eye, X, HelpCircle } from 'lucide-react';
 import { apiClient, ThreatNode } from '@/lib/api_client';
 
 const minerSchema = z.object({
   name: z.string().min(3, 'Name must be at least 3 characters'),
   sourceUrl: z.string().url('Must be a valid URL'),
   parserType: z.enum(['csv', 'json', 'regex', 'stix', 'txt']),
+  fallbackIocType: z.enum(['ip', 'ipv6', 'domain', 'url', 'hash', 'email']),
   pollingInterval: z.string().min(1, 'Cron expression is required'),
   status: z.enum(['enabled', 'disabled']),
   authType: z.enum(['none', 'basic', 'bearer']),
@@ -68,6 +69,7 @@ export default function MinersPage() {
     defaultValues: {
       status: 'enabled',
       parserType: 'json',
+      fallbackIocType: 'ip',
       authType: 'none',
     },
   });
@@ -106,6 +108,7 @@ export default function MinersPage() {
       const configPayload = {
         url: data.sourceUrl,
         parser: data.parserType,
+        fallback_ioc_type: data.fallbackIocType,
         polling_interval: cronToMinutes(data.pollingInterval),
         auth_type: data.authType,
         ...(data.authType === 'basic' && {
@@ -145,6 +148,7 @@ export default function MinersPage() {
     if (miner.config) {
       setValue('sourceUrl', miner.config.url || '');
       setValue('parserType', miner.config.parser || 'json');
+      setValue('fallbackIocType', miner.config.fallback_ioc_type || 'ip');
       setValue('pollingInterval', miner.config.polling_interval ? `*/${miner.config.polling_interval} * * * *` : '0 */2 * * *');
       setValue('authType', miner.config.auth_type || 'none');
       setValue('authUsername', miner.config.auth_username || '');
@@ -153,6 +157,7 @@ export default function MinersPage() {
     } else {
       setValue('sourceUrl', '');
       setValue('parserType', 'json');
+      setValue('fallbackIocType', 'ip');
       setValue('pollingInterval', '0 */2 * * *');
       setValue('authType', 'none');
       setValue('authUsername', '');
@@ -274,6 +279,32 @@ export default function MinersPage() {
                   <option value="stix">STIX/TAXII</option>
                   <option value="txt">TXT (Plain Text List)</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="flex items-center text-sm font-medium text-zinc-400 mb-1">
+                  Fallback IOC Type
+                  <div className="relative group ml-1">
+                    <HelpCircle className="w-4 h-4 text-zinc-500 cursor-help" />
+                    <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block w-64 p-2 bg-zinc-800 text-xs text-zinc-300 rounded shadow-lg z-10">
+                      ThreatNexus automatically classifies each IOC as: ip, ipv6, domain, url, hash, email. Set a fallback only if your feed contains non-standard formats.
+                    </div>
+                  </div>
+                </label>
+                <select
+                  {...register('fallbackIocType')}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                >
+                  <option value="ip">ip</option>
+                  <option value="ipv6">ipv6</option>
+                  <option value="domain">domain</option>
+                  <option value="url">url</option>
+                  <option value="hash">hash</option>
+                  <option value="email">email</option>
+                </select>
+                <p className="text-xs text-zinc-500 mt-1">
+                  The IOC type is automatically detected. This value is used only as a fallback for unrecognized indicators.
+                </p>
               </div>
 
               <div>
@@ -495,20 +526,74 @@ export default function MinersPage() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-zinc-800">
-                            {minerLogs.map((log, idx) => (
-                              <tr key={idx} className="hover:bg-zinc-900/50">
-                                <td className="px-4 py-2 font-mono text-xs text-zinc-400">
-                                  {new Date(log.timestamp).toLocaleString()}
-                                </td>
-                                <td className="px-4 py-2">
-                                  <span className={`font-medium ${log.status === 'success' ? 'text-emerald-400' : 'text-red-400'}`}>
-                                    {log.status}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-2 text-zinc-300">{log.message}</td>
-                                <td className="px-4 py-2 font-mono text-zinc-400">{log.iocs_processed}</td>
-                              </tr>
-                            ))}
+                            {minerLogs.map((log, idx) => {
+                              const renderLogMessage = (log: any) => {
+                                if (log.status === 'error') {
+                                  return <span className="text-red-400">{log.message}</span>;
+                                }
+                                
+                                const typesMatch = log.message.match(/Types:\s*\[(.*?)\]/);
+                                const fallbackMatch = log.message.match(/Fallback to '([^']+)' for (\d+) unrecognized values/);
+                                
+                                if (!typesMatch && !fallbackMatch) {
+                                  return <span className="text-zinc-300">{log.message}</span>;
+                                }
+
+                                const typesStr = typesMatch ? typesMatch[1] : '';
+                                const typeEntries = typesStr.split(',').map((s: string) => s.trim()).filter(Boolean);
+                                
+                                const fallbackType = fallbackMatch ? fallbackMatch[1] : '';
+                                const fallbackCount = fallbackMatch ? parseInt(fallbackMatch[2], 10) : 0;
+
+                                const getBadgeColor = (type: string) => {
+                                  switch (type.toLowerCase()) {
+                                    case 'domain': return 'bg-green-500/10 text-green-400 border-green-500/20';
+                                    case 'ip': return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
+                                    case 'ipv6': return 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20';
+                                    case 'hash': return 'bg-orange-500/10 text-orange-400 border-orange-500/20';
+                                    case 'url': return 'bg-purple-500/10 text-purple-400 border-purple-500/20';
+                                    case 'email': return 'bg-pink-500/10 text-pink-400 border-pink-500/20';
+                                    default: return 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20';
+                                  }
+                                };
+
+                                return (
+                                  <div className="flex flex-col gap-1">
+                                    <span className="text-zinc-300">{log.message.replace(/Types: \[.*?\].*/, '').trim()}</span>
+                                    <div className="flex flex-wrap gap-2 mt-1">
+                                      {typeEntries.map((entry: string, i: number) => {
+                                        const [type, count] = entry.split(':').map((s: string) => s.trim());
+                                        return (
+                                          <span key={i} className={`px-2 py-0.5 text-xs font-medium border rounded-full ${getBadgeColor(type)}`}>
+                                            {type}: {count}
+                                          </span>
+                                        );
+                                      })}
+                                      {fallbackCount > 0 && (
+                                        <span className="px-2 py-0.5 text-xs font-medium border rounded-full bg-yellow-500/10 text-yellow-400 border-yellow-500/20">
+                                          Fallback ({fallbackType}): {fallbackCount}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              };
+
+                              return (
+                                <tr key={idx} className="hover:bg-zinc-900/50">
+                                  <td className="px-4 py-2 font-mono text-xs text-zinc-400 align-top">
+                                    {new Date(log.timestamp).toLocaleString()}
+                                  </td>
+                                  <td className="px-4 py-2 align-top">
+                                    <span className={`font-medium ${log.status === 'success' ? 'text-emerald-400' : 'text-red-400'}`}>
+                                      {log.status}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-2 align-top">{renderLogMessage(log)}</td>
+                                  <td className="px-4 py-2 font-mono text-zinc-400 align-top">{log.iocs_processed}</td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
