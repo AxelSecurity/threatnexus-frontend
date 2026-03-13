@@ -51,6 +51,12 @@ export default function AggregatorsPage() {
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
+  // IOC Pagination & Search State
+  const [iocSearch, setIocSearch] = useState('');
+  const [iocPage, setIocPage] = useState(0);
+  const [iocTotal, setIocTotal] = useState(0);
+  const [iocLoading, setIocLoading] = useState(false);
+
   const loadData = async () => {
     setLoading(true);
     try {
@@ -87,6 +93,29 @@ export default function AggregatorsPage() {
     fetchData();
     return () => { mounted = false; };
   }, []);
+
+  useEffect(() => {
+    if (!selectedAggregator || !selectedAggregator.id) return;
+
+    const fetchAggregatorIocs = async () => {
+      setIocLoading(true);
+      try {
+        const res = await apiClient.getAggregatorIocs(selectedAggregator.id!, iocSearch, iocPage * 10, 10);
+        setAggregatorIocs(res.items || []);
+        setIocTotal(res.total || 0);
+      } catch (error) {
+        console.error('Failed to fetch aggregator IOCs', error);
+      } finally {
+        setIocLoading(false);
+      }
+    };
+
+    const timeoutId = setTimeout(() => {
+      fetchAggregatorIocs();
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [selectedAggregator, iocSearch, iocPage]);
 
   const onSubmit = async (data: AggregatorFormValues) => {
     try {
@@ -143,20 +172,16 @@ export default function AggregatorsPage() {
     setIsModalOpen(true);
     setModalLoading(true);
     setModalError(null);
+    setIocSearch('');
+    setIocPage(0);
     try {
       if (aggregator.id) {
-        const [logs, iocs] = await Promise.all([
-          apiClient.getNodeLogs(aggregator.id).catch(e => {
-            console.error("Logs fetch error:", e);
-            throw new Error("Impossibile scaricare i Logs. Verifica che il backend sia in esecuzione e che le API /logs esistano.");
-          }),
-          apiClient.getNodeIocs(aggregator.id).catch(e => {
-            console.error("IOCs fetch error:", e);
-            throw new Error("Impossibile scaricare gli IOCs. Verifica che il backend sia in esecuzione e che le API /iocs esistano.");
-          })
-        ]);
+        const logs = await apiClient.getNodeLogs(aggregator.id).catch(e => {
+          console.error("Logs fetch error:", e);
+          throw new Error("Impossibile scaricare i Logs. Verifica che il backend sia in esecuzione e che le API /logs esistano.");
+        });
         setAggregatorLogs(logs || []);
-        setAggregatorIocs(iocs || []);
+        // IOCs are now fetched via the useEffect hook
       }
     } catch (error: any) {
       console.error('Failed to fetch aggregator details', error);
@@ -614,10 +639,26 @@ export default function AggregatorsPage() {
                   {/* IOCs Section */}
                   <div>
                     <h3 className="text-lg font-medium text-white mb-4">Recent IOCs</h3>
-                    {aggregatorIocs.length === 0 ? (
-                      <p className="text-zinc-500 text-sm">No IOCs available.</p>
-                    ) : (
-                      <div className="bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden">
+                    
+                    <div className="mb-4">
+                      <input
+                        type="text"
+                        placeholder="Search IOC value..."
+                        value={iocSearch}
+                        onChange={(e) => {
+                          setIocSearch(e.target.value);
+                          setIocPage(0);
+                        }}
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      />
+                    </div>
+
+                    <div className="bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden">
+                      {iocLoading ? (
+                        <div className="p-8 text-center text-zinc-500 text-sm">Loading IOCs...</div>
+                      ) : aggregatorIocs.length === 0 ? (
+                        <div className="p-8 text-center text-zinc-500 text-sm">No IOCs found.</div>
+                      ) : (
                         <table className="w-full text-left text-sm">
                           <thead className="bg-zinc-900 text-zinc-400 border-b border-zinc-800">
                             <tr>
@@ -650,8 +691,28 @@ export default function AggregatorsPage() {
                             ))}
                           </tbody>
                         </table>
+                      )}
+                    </div>
+                    
+                    <div className="mt-4 flex items-center justify-between text-sm text-zinc-400">
+                      <div>Total: {iocTotal} IOCs</div>
+                      <div className="flex space-x-2">
+                        <button
+                          onClick={() => setIocPage(p => Math.max(0, p - 1))}
+                          disabled={iocPage === 0 || iocLoading}
+                          className="px-3 py-1 bg-zinc-900 border border-zinc-800 rounded-md hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Previous
+                        </button>
+                        <button
+                          onClick={() => setIocPage(p => p + 1)}
+                          disabled={(iocPage + 1) * 10 >= iocTotal || iocLoading}
+                          className="px-3 py-1 bg-zinc-900 border border-zinc-800 rounded-md hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Next
+                        </button>
                       </div>
-                    )}
+                    </div>
                   </div>
                 </>
               )}

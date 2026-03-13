@@ -134,6 +134,16 @@ export const apiClient = {
     return handleResponse(res);
   },
 
+  async getAggregatorIocs(aggregatorId: string, search: string = '', skip: number = 0, limit: number = 10): Promise<{ total: number, items: any[] }> {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    params.append('skip', skip.toString());
+    params.append('limit', limit.toString());
+    
+    const res = await fetch(`${BASE_URL}/aggregators/${aggregatorId}/iocs?${params.toString()}`);
+    return handleResponse(res);
+  },
+
   async getEdges(): Promise<ThreatEdge[]> {
     const res = await fetch(`${BASE_URL}/edges`);
     return handleResponse(res);
